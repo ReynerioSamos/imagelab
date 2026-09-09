@@ -1,0 +1,18 @@
+# Locally stored images -- never commit uploaded/generated files
+/storage/originals/*
+/storage/variants/*
+!/storage/originals/.gitkeep
+!/storage/variants/.gitkeep
+
+# Local environment / credentials
+.envrc
+
+# Compiled binaries
+/bin/
+*.exe
+
+# OS/editor cruft
+.DS_Store
+
+# ZoneIdentifier files (Windows)
+*.Zone.Identifier

@@ -1,0 +1,137 @@
+:root {
+  --navy: #1e2761;
+  --ice: #cadcfc;
+  --card: #f3f6fc;
+  --text: #22262e;
+  --muted: #5b6472;
+  --accent: #4a6fa5;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Calibri, sans-serif;
+  color: var(--text);
+  background: #ffffff;
+}
+
+.app {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 4rem;
+}
+
+h1 {
+  color: var(--navy);
+  margin-bottom: 0.25rem;
+}
+
+.tagline {
+  color: var(--muted);
+  margin-top: 0;
+}
+
+section {
+  background: var(--card);
+  border: 1px solid var(--ice);
+  border-radius: 10px;
+  padding: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+h2 {
+  margin-top: 0;
+  color: var(--navy);
+  font-size: 1.05rem;
+}
+
+.file-label {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  background: var(--navy);
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+input[type="file"] { display: none; }
+
+.preview-area {
+  margin-top: 1rem;
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+#preview-img {
+  width: 140px;
+  height: 140px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--ice);
+  background: #fff;
+}
+
+.file-meta {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.file-meta dt {
+  color: var(--muted);
+  font-weight: 600;
+  margin-top: 0.4rem;
+}
+
+.file-meta dd {
+  margin: 0;
+}
+
+#process-button {
+  display: block;
+  margin-top: 1.25rem;
+  padding: 0.6rem 1.4rem;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+#process-button:disabled {
+  background: #a7b3c9;
+  cursor: not-allowed;
+}
+
+.status-line {
+  color: var(--muted);
+  font-size: 0.9rem;
+  min-height: 1.2em;
+}
+
+.timeline {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.timeline li[data-active="true"] { color: var(--navy); font-weight: 600; }
+.timeline li[data-done="true"] { color: var(--accent); }
+
+.polling-indicator {
+  font-size: 0.85rem;
+  color: var(--accent);
+  font-style: italic;
+}
+
+.results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1rem;
+}

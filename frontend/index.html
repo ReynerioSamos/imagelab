@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ImageLab</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="app">
+    <h1>ImageLab</h1>
+    <p class="tagline">Upload an image and watch it move from queued to complete.</p>
+
+    <section class="upload-panel">
+      <label for="file-input" class="file-label">Choose image</label>
+      <input type="file" id="file-input" accept="image/jpeg,image/png" />
+
+      <div id="preview-area" class="preview-area" hidden>
+        <img id="preview-img" alt="Selected image preview" />
+        <dl class="file-meta">
+          <dt>Filename</dt><dd id="meta-filename"></dd>
+          <dt>Size</dt><dd id="meta-size"></dd>
+          <dt>Type</dt><dd id="meta-type"></dd>
+        </dl>
+      </div>
+
+      <button id="process-button" type="button" disabled>Process image</button>
+      <p id="upload-status" class="status-line" role="status"></p>
+    </section>
+
+    <!-- static placeholders for Week 1. Become live
+         once job creation, workers, and polling exist. -->
+    <section class="job-panel">
+      <h2>Job status</h2>
+      <p id="job-status-text">No active job</p>
+      <ol id="job-timeline" class="timeline" hidden>
+        <li data-step="accepted">Upload accepted</li>
+        <li data-step="stored">Original stored</li>
+        <li data-step="generating">Generating variants</li>
+        <li data-step="complete">Complete</li>
+      </ol>
+      <p id="polling-indicator" class="polling-indicator" hidden>
+        Checking status&hellip; <span>Every 1 second</span>
+      </p>
+    </section>
+
+    <!-- static placeholder for Week 1. -->
+    <section class="results-panel">
+      <h2>Results</h2>
+      <p id="results-empty-text">No images generated yet</p>
+      <div id="results-grid" class="results-grid" hidden></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
