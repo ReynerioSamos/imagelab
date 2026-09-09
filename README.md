@@ -11,7 +11,7 @@ Assessment: Build a synchronous image processing application where an API accpet
 
 | Check-in | Primary Focus | Expectation | Date | Pass? | Work needed | 
 |----------|---------------|-------------|------|-------|-------------|
-| Week 1   | Contract, setup, schema, upload and original storage   |  Application starts; database and upload foundation work  | 9/9/2026 | No | Make a disclaimer for naccepted image |
+| Week 1   | Contract, setup, schema, upload and original storage   |  Application starts; database and upload foundation work  | 9/9/2026 | No | Make a disclaimer for naccepted image, Change the UI to look more like the slides |
 | Week 2   | | | | |  |
 
 ---
