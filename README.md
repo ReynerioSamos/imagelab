@@ -302,7 +302,9 @@ sudo usermod -aG docker $USER
 ```
 
 Applying group change
-
+```bash
+newgrp docker
+```
 
 Verify
 ```bash
