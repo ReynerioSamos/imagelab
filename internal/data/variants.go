@@ -1,6 +1,11 @@
 package data
 
-import "time"
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"time"
+)
 
 // Variant is one generated output (thumbnail, preview, or display) for an
 // image. Width/Height record the ACTUAL produced dimensions, which for
@@ -20,4 +25,73 @@ type Variant struct {
 	Height         int       `json:"height"`
 	SizeBytes      int64     `json:"-"`
 	CreatedAt      time.Time `json:"created_at"`
+}
+
+type VariantModel struct {
+	DB *sql.DB
+}
+
+func (m VariantModel) Insert(v *Variant) error {
+	query := `
+		INSERT INTO variants (image_id, name, stored_filename, width, height, size_bytes)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, created_at`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	return m.DB.QueryRowContext(ctx, query,
+		v.ImageID, v.Name, v.StoredFilename, v.Width, v.Height, v.SizeBytes,
+	).Scan(&v.ID, &v.CreatedAt)
+}
+
+func (m VariantModel) GetByImageAndName(imageID, name string) (*Variant, error) {
+	query := `
+		SELECT id, image_id, name, stored_filename, width, height, size_bytes, created_at
+		FROM variants
+		WHERE image_id = $1 AND name = $2`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var v Variant
+	err := m.DB.QueryRowContext(ctx, query, imageID, name).Scan(
+		&v.ID, &v.ImageID, &v.Name, &v.StoredFilename, &v.Width, &v.Height, &v.SizeBytes, &v.CreatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrRecordNotFound
+		}
+		return nil, err
+	}
+
+	return &v, nil
+}
+
+func (m VariantModel) GetAllForImage(imageID string) ([]*Variant, error) {
+	query := `
+		SELECT id, image_id, name, stored_filename, width, height, size_bytes, created_at
+		FROM variants
+		WHERE image_id = $1`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	rows, err := m.DB.QueryContext(ctx, query, imageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var variants []*Variant
+	for rows.Next() {
+		var v Variant
+		if err := rows.Scan(&v.ID, &v.ImageID, &v.Name, &v.StoredFilename, &v.Width, &v.Height, &v.SizeBytes, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		variants = append(variants, &v)
+	}
+
+	return variants, rows.Err()
 }

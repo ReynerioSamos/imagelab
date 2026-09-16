@@ -11,10 +11,8 @@ import (
 	"time"
 )
 
-// Week 2 note: once the background worker exists, this function must also
-// cancel the worker's context and then wait on a sync.WaitGroup before
-// returning -- cancel first, wait second, never the reverse, or shutdown
-// deadlocks waiting on a goroutine nothing ever told to stop.
+// Week 2: Gracefully stops both the background worker goroutines
+// and the HTTP server during shutdown.
 func (app *application) serve() error {
 	srv := &http.Server{
 		Addr:        fmt.Sprintf(":%d", app.config.port),
@@ -28,12 +26,21 @@ func (app *application) serve() error {
 
 	shutdownError := make(chan error)
 
+	workerCtx, cancelWorker := context.WithCancel(context.Background())
+
+	// Start single background worker
+	app.worker.Start(workerCtx)
+
 	go func() {
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		s := <-quit
 
 		app.logger.Info("caught signal", "signal", s.String())
+
+		// Cancel worker first, wait second, then stop HTTP server.
+		cancelWorker()
+		app.worker.Stop()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()

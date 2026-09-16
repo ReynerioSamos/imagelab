@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"imagelab/internal/data"
+	"imagelab/internal/worker"
 
 	_ "github.com/lib/pq"
 )
@@ -34,6 +35,7 @@ type application struct {
 	config config
 	logger *slog.Logger
 	models data.Models
+	worker *worker.Worker
 }
 
 func main() {
@@ -67,10 +69,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	models := data.NewModels(db)
+	w := worker.New(models, cfg.storage.root, logger)
+
 	app := &application{
 		config: cfg,
 		logger: logger,
-		models: data.NewModels(db),
+		models: models,
+		worker: w,
 	}
 
 	if err := app.serve(); err != nil {

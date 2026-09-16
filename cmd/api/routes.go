@@ -14,8 +14,9 @@ func (app *application) routes() http.Handler {
 
 	mux.HandleFunc("POST /v1/images", app.uploadImageHandler)
 
-	// Week 2 adds: GET /v1/jobs/{job_id}
-	// Week 2 adds: GET /v1/images/{image_id}/variants/{name}
+	// Week 2 routes
+	mux.HandleFunc("GET /v1/jobs/{job_id}", app.getJobHandler)
+	mux.HandleFunc("GET /v1/images/{image_id}/variants/{name}", app.getVariantHandler)
 
 	// Serves index.html/app.js/style.css from ./frontend so the browser
 	// and API share one origin -- no CORS configuration needed.

@@ -38,11 +38,9 @@ func (app *application) uploadConstraintsHandler(w http.ResponseWriter, r *http.
 	}
 }
 
-// uploadImageHandler implements the Week 1 acceptance boundary only:
-// validate the upload, store the original, and record it durably. It
-// deliberately does NOT create a job or return 202 -- no worker exists yet
-// to own that work (API-03, WRK-01), and a 202 pointing at a job resource
-// that cannot be polled would be a false promise. That arrives in Week 2.
+// uploadImageHandler implements Week 2 requirement:
+// validate the upload, store the original, insert a durable queued job row,
+// and return 202 Accepted with Location header and job details.
 func (app *application) uploadImageHandler(w http.ResponseWriter, r *http.Request) {
 	// VAL-01 at the transport layer: an oversized body is cut off before
 	// multipart parsing writes anything to disk or touches the database.
@@ -138,25 +136,110 @@ func (app *application) uploadImageHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	app.logger.Info("image stored",
+	// Create durable queued job for background worker processing
+	job, err := app.models.Jobs.Insert(img.ID)
+	if err != nil {
+		_ = os.Remove(destPath)
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	statusURL := fmt.Sprintf("/v1/jobs/%s", job.ID)
+	headers := make(http.Header)
+	headers.Set("Location", statusURL)
+
+	app.logger.Info("image stored and job queued",
 		"image_id", img.ID,
+		"job_id", job.ID,
 		"stored_filename", img.StoredFilename,
 		"media_type", img.MediaType,
 		"size_bytes", img.SizeBytes,
 	)
 
-	// Week 1 response is intentionally 201 Created, not the final 202
-	// Accepted contract from API-04: there is no job yet for job_id and
-	// status_url to point at. Week 2 replaces this with the real 202 plus
-	// Location header once Jobs.Insert and the worker exist.
-	if err := app.writeJSON(w, http.StatusCreated, envelope{
-		"image_id":          img.ID,
-		"original_filename": img.OriginalFilename,
-		"media_type":        img.MediaType,
-		"size_bytes":        img.SizeBytes,
-	}, nil); err != nil {
+	// Week 2 response contract: 202 Accepted with status URL location
+	if err := app.writeJSON(w, http.StatusAccepted, envelope{
+		"image_id":   img.ID,
+		"job_id":     job.ID,
+		"status":     job.Status,
+		"status_url": statusURL,
+	}, headers); err != nil {
 		app.serverErrorResponse(w, r, err)
 	}
+}
+
+// getJobHandler exposes GET /v1/jobs/{job_id} for short-polling progress.
+func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("job_id")
+	if jobID == "" {
+		app.notFoundResponse(w, r)
+		return
+	}
+
+	job, err := app.models.Jobs.Get(jobID)
+	if err != nil {
+		if errors.Is(err, data.ErrRecordNotFound) {
+			app.notFoundResponse(w, r)
+			return
+		}
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	res := envelope{
+		"id":         job.ID,
+		"image_id":   job.ImageID,
+		"status":     job.Status,
+		"queued_at":  job.QueuedAt,
+		"started_at": job.StartedAt,
+	}
+
+	if job.Status == "completed" {
+		res["completed_at"] = job.CompletedAt
+		variants, err := app.models.Variants.GetAllForImage(job.ImageID)
+		if err == nil {
+			varList := make([]map[string]any, 0, len(variants))
+			for _, v := range variants {
+				varList = append(varList, map[string]any{
+					"name":   v.Name,
+					"width":  v.Width,
+					"height": v.Height,
+					"url":    fmt.Sprintf("/v1/images/%s/variants/%s", v.ImageID, v.Name),
+				})
+			}
+			res["variants"] = varList
+		}
+	} else if job.Status == "failed" {
+		res["failed_at"] = job.FailedAt
+		res["error"] = job.ErrorMessage
+	}
+
+	if err := app.writeJSON(w, http.StatusOK, envelope{"job": res}, nil); err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
+// getVariantHandler exposes GET /v1/images/{image_id}/variants/{name}
+func (app *application) getVariantHandler(w http.ResponseWriter, r *http.Request) {
+	imageID := r.PathValue("image_id")
+	variantName := r.PathValue("name")
+
+	if imageID == "" || variantName == "" {
+		app.notFoundResponse(w, r)
+		return
+	}
+
+	variant, err := app.models.Variants.GetByImageAndName(imageID, variantName)
+	if err != nil {
+		if errors.Is(err, data.ErrRecordNotFound) {
+			app.notFoundResponse(w, r)
+			return
+		}
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	filePath := filepath.Join(app.config.storage.root, "variants", variant.StoredFilename)
+	http.ServeFile(w, r, filePath)
 }
 
 // detectImageFormat confirms the bytes really are a decodable JPEG or PNG.

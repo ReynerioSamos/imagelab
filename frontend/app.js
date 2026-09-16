@@ -17,6 +17,12 @@ const els = {
   processButton:    document.getElementById("process-button"),
   processLabel:     document.getElementById("process-button-label"),
   uploadMessage:    document.getElementById("upload-message"),
+
+  // Week 2 elements
+  jobIdle:          document.getElementById("job-idle"),
+  jobActive:        document.getElementById("job-active"),
+  jobId:            document.getElementById("job-id"),
+  statusBadge:      document.getElementById("status-badge"),
 };
 
 let selectedFile = null;
@@ -106,6 +112,13 @@ function resetToInitialState() {
 
   els.processButton.disabled = true; // UI-02
   els.processLabel.textContent = "Process image";
+
+  if (els.jobIdle) els.jobIdle.hidden = false;
+  if (els.jobActive) els.jobActive.hidden = true;
+  if (els.statusBadge) {
+    els.statusBadge.className = "badge badge-idle";
+    els.statusBadge.textContent = "Idle";
+  }
 }
 
 function showSelected(file) {
@@ -209,12 +222,18 @@ els.processButton.addEventListener("click", async () => {
 
     const result = await response.json();
 
-    // Week 1 stops here: the response is 201 Created with an image id and
-    // no job, so there is nothing to poll yet. Week 2 swaps this for the
-    // 202 Accepted flow that populates the job card and starts polling.
+    // Week 2 Scope: Render the 202 response details without starting polling.
+    els.jobIdle.hidden = true;
+    els.jobActive.hidden = false;
+    els.jobId.textContent = result.job_id;
+
+    els.statusBadge.className = `badge badge-${result.status || "queued"}`;
+    els.statusBadge.textContent =
+      (result.status || "queued").charAt(0).toUpperCase() +
+      (result.status || "queued").slice(1);
+
     showMessage(
-      `Original stored. Image ID ${result.image_id}. ` +
-      `Job creation and background processing arrive in Week 2.`,
+      `Upload accepted (202 Accepted). Job ID ${result.job_id} created. Status URL: ${result.status_url}`,
       "success"
     );
   } catch (err) {
