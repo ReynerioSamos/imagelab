@@ -1,0 +1,9 @@
+.git
+.gitignore
+.envrc
+.envrc.example
+uploads/
+*.md
+!README.md
+bin/
+tmp/

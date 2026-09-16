@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: imagelab_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: imagelab
+      POSTGRES_PASSWORD: imagelabpass
+      POSTGRES_DB: imagelab
+    ports:
+      - "5433:5432" # Changed to 5433 to avoid conflicts with local Postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U imagelab -d imagelab"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Migration Runner (Runs once, then exits)
+  migrate:
+    build: .
+    container_name: imagelab_migrate
+    command: /usr/local/bin/migrate -path /app/migrations -database "postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable" up
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # Go API Server
+  api:
+    build: .
+    container_name: imagelab_api
+    ports:
+      - "4000:4000"
+    environment:
+      IMAGELAB_DB_DSN: "postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable"
+      PORT: "4000"
+    volumes:
+      # FIXED: Matches the /app/storage path from your Dockerfile
+      - ./storage:/app/storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    command: /app/api -db-dsn="postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable"
+
+# FIXED: Only named volumes are declared here
+volumes:
+  pgdata:
