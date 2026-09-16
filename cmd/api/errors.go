@@ -16,7 +16,7 @@ func (app *application) errorResponse(w http.ResponseWriter, r *http.Request, st
 
 // serverErrorResponse never leaks the underlying error, a stack trace, or
 // an internal path to the client (Section 13, Minimum Safeguards) -- the
-// real error only goes to the log.
+// real error goes only to the log.
 func (app *application) serverErrorResponse(w http.ResponseWriter, r *http.Request, err error) {
 	app.logError(r, err)
 	app.errorResponse(w, r, http.StatusInternalServerError, "the server encountered a problem and could not process your request")
@@ -24,6 +24,19 @@ func (app *application) serverErrorResponse(w http.ResponseWriter, r *http.Reque
 
 func (app *application) badRequestResponse(w http.ResponseWriter, r *http.Request, err error) {
 	app.errorResponse(w, r, http.StatusBadRequest, err.Error())
+}
+
+// unsupportedMediaTypeResponse is used when the upload is well-formed but
+// is not a format ImageLab accepts. 415 is more precise than 400 here and
+// matches the API contract table in the README.
+func (app *application) unsupportedMediaTypeResponse(w http.ResponseWriter, r *http.Request, message string) {
+	app.errorResponse(w, r, http.StatusUnsupportedMediaType, message)
+}
+
+// entityTooLargeResponse distinguishes "too big" from "wrong type" so the
+// browser can show the user which rule they actually broke.
+func (app *application) entityTooLargeResponse(w http.ResponseWriter, r *http.Request, message string) {
+	app.errorResponse(w, r, http.StatusRequestEntityTooLarge, message)
 }
 
 func (app *application) notFoundResponse(w http.ResponseWriter, r *http.Request) {

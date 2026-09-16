@@ -11,16 +11,19 @@ import (
 	"time"
 )
 
-// once a background worker exists, this function will also
-// need to cancel its context and wait on a sync.WaitGroup before
-// returning -- the same shutdown-ordering and locking behavior we did in async quiz 2
+// Week 2 note: once the background worker exists, this function must also
+// cancel the worker's context and then wait on a sync.WaitGroup before
+// returning -- cancel first, wait second, never the reverse, or shutdown
+// deadlocks waiting on a goroutine nothing ever told to stop.
 func (app *application) serve() error {
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", app.config.port),
-		Handler:      app.routes(),
-		IdleTimeout:  time.Minute,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		Addr:        fmt.Sprintf(":%d", app.config.port),
+		Handler:     app.routes(),
+		IdleTimeout: time.Minute,
+		// ReadTimeout is generous because it must cover the upload of a
+		// file up to 10 MB over a slow connection, not just header parsing.
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
 	}
 
 	shutdownError := make(chan error)

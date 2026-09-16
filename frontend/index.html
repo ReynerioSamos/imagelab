@@ -3,55 +3,181 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ImageLab</title>
+<title>ImageLab &middot; Asynchronous Image Processing</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <main class="app">
-    <h1>ImageLab</h1>
-    <p class="tagline">Upload an image and watch it move from queued to complete.</p>
 
-    <section class="upload-panel">
-      <label for="file-input" class="file-label">Choose image</label>
-      <input type="file" id="file-input" accept="image/jpeg,image/png" />
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 3h6"/><path d="M10 3v6.5L4.7 18a2 2 0 0 0 1.7 3h11.2a2 2 0 0 0 1.7-3L14 9.5V3"/>
+        <path d="M7.5 15h9"/>
+      </svg>
+    </span>
+    <span class="brand-name">ImageLab</span>
+    <span class="brand-sub">Asynchronous Image Processing</span>
+  </div>
+  <div class="workspace-pill">
+    <span class="dot" aria-hidden="true"></span>
+    <span id="workspace-label">LOCAL workspace</span>
+  </div>
+</header>
 
-      <div id="preview-area" class="preview-area" hidden>
-        <img id="preview-img" alt="Selected image preview" />
-        <dl class="file-meta">
-          <dt>Filename</dt><dd id="meta-filename"></dd>
-          <dt>Size</dt><dd id="meta-size"></dd>
-          <dt>Type</dt><dd id="meta-type"></dd>
-        </dl>
+<main class="page">
+
+  <div class="page-head">
+    <h1>Process an image</h1>
+    <p class="page-sub">Upload an image and generate optimized variants in the background.</p>
+  </div>
+
+  <div class="grid-2">
+
+    <!-- ========== Upload card ========== -->
+    <section class="card" aria-labelledby="upload-heading">
+      <div class="card-head">
+        <span class="card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 16l-4-4-4 4"/><path d="M12 12v9"/>
+            <path d="M20.4 14.9A5 5 0 0 0 18 5.5h-1.3A8 8 0 1 0 3 13.3"/>
+          </svg>
+        </span>
+        <h2 id="upload-heading">Upload image</h2>
       </div>
 
-      <button id="process-button" type="button" disabled>Process image</button>
-      <p id="upload-status" class="status-line" role="status"></p>
+      <!-- Empty state: UI-01 -->
+      <div id="dropzone" class="dropzone">
+        <div id="dropzone-empty" class="dropzone-empty">
+          <span class="dz-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/>
+            </svg>
+          </span>
+          <p class="dz-title">No image selected</p>
+          <label for="file-input" class="btn btn-ghost">Choose image</label>
+          <!-- Accepted-type disclaimer, populated from GET /v1/upload-constraints -->
+          <p id="constraints-note" class="dz-note">JPEG or PNG &middot; up to 10 MB</p>
+        </div>
+
+        <!-- Selected state: UI-05 -->
+        <div id="dropzone-selected" class="dropzone-selected" hidden>
+          <img id="preview-img" class="preview-thumb" alt="Preview of the selected image" />
+          <div class="selected-meta">
+            <p id="meta-filename" class="selected-name"></p>
+            <p id="meta-line" class="selected-line"></p>
+            <label for="file-input" class="btn btn-ghost btn-sm">
+              <span class="btn-ico" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/>
+                </svg>
+              </span>
+              Choose another image
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <input type="file" id="file-input" accept="image/jpeg,image/png" />
+
+      <button id="process-button" class="btn btn-primary btn-block" type="button" disabled>
+        <span class="btn-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>
+          </svg>
+        </span>
+        <span id="process-button-label">Process image</span>
+      </button>
+
+      <!-- Validation / error messages land here -->
+      <p id="upload-message" class="form-message" role="status" aria-live="polite" hidden></p>
     </section>
 
-    <!-- static placeholders for Week 1. Become live
-         once job creation, workers, and polling exist. -->
-    <section class="job-panel">
-      <h2>Job status</h2>
-      <p id="job-status-text">No active job</p>
-      <ol id="job-timeline" class="timeline" hidden>
-        <li data-step="accepted">Upload accepted</li>
-        <li data-step="stored">Original stored</li>
-        <li data-step="generating">Generating variants</li>
-        <li data-step="complete">Complete</li>
-      </ol>
-      <p id="polling-indicator" class="polling-indicator" hidden>
-        Checking status&hellip; <span>Every 1 second</span>
-      </p>
+    <!-- ========== Job card ========== -->
+    <section class="card" aria-labelledby="job-heading">
+      <div class="card-head">
+        <span class="card-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>
+          </svg>
+        </span>
+        <h2 id="job-heading">Processing job</h2>
+        <span id="status-badge" class="badge badge-idle">No job</span>
+      </div>
+
+      <!-- UI-03: idle until a job exists -->
+      <div id="job-idle" class="job-idle">
+        <p class="muted">No active job</p>
+        <p class="muted-sm">Submit an image to create a processing job.</p>
+      </div>
+
+      <!-- Becomes live in Week 2 (job id) and Week 3 (timeline + polling) -->
+      <div id="job-active" hidden>
+        <p class="job-id-label">Job ID</p>
+        <p id="job-id" class="job-id"></p>
+
+        <ol class="timeline" id="timeline">
+          <li class="tl-step" data-step="accepted">
+            <span class="tl-marker"></span>
+            <span class="tl-body"><span class="tl-title">Upload accepted</span><span class="tl-time"></span></span>
+          </li>
+          <li class="tl-step" data-step="stored">
+            <span class="tl-marker"></span>
+            <span class="tl-body"><span class="tl-title">Original stored</span><span class="tl-time"></span></span>
+          </li>
+          <li class="tl-step" data-step="generating">
+            <span class="tl-marker"></span>
+            <span class="tl-body"><span class="tl-title">Generating variants</span><span class="tl-time"></span></span>
+          </li>
+          <li class="tl-step" data-step="complete">
+            <span class="tl-marker"></span>
+            <span class="tl-body"><span class="tl-title">Complete</span><span class="tl-time">Pending</span></span>
+          </li>
+        </ol>
+
+        <!-- UI-12: shown while queued/processing once polling exists -->
+        <p id="polling-indicator" class="polling-indicator" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          Checking status automatically &middot; <span class="nowrap">every 1 second</span>
+        </p>
+
+        <!-- POLL-09: retrieval-error recovery, wired up in Week 3 -->
+        <div id="retrieval-error" class="retrieval-error" hidden>
+          <p class="retrieval-text">Unable to check status. The job may still be running.</p>
+          <button id="try-again-button" class="btn btn-ghost btn-sm" type="button">Try again</button>
+        </div>
+      </div>
     </section>
 
-    <!-- static placeholder for Week 1. -->
-    <section class="results-panel">
-      <h2>Results</h2>
-      <p id="results-empty-text">No images generated yet</p>
-      <div id="results-grid" class="results-grid" hidden></div>
-    </section>
-  </main>
+  </div>
 
-  <script src="/app.js"></script>
+  <!-- ========== Results ========== -->
+  <section class="card results-card" aria-labelledby="results-heading">
+    <div class="card-head">
+      <span class="card-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/>
+        </svg>
+      </span>
+      <h2 id="results-heading">Generated images</h2>
+    </div>
+
+    <!-- UI-04 -->
+    <p id="results-empty" class="muted">No images generated yet</p>
+    <!-- UI-14/UI-15: filled only after the job reports completed -->
+    <div id="results-grid" class="results-grid" hidden></div>
+  </section>
+
+  <footer class="page-foot">
+    <p>Week 1 &middot; acceptance foundation. Job creation, the background worker and one-second short polling arrive in Weeks 2 and 3.</p>
+  </footer>
+
+</main>
+
+<script src="/app.js"></script>
 </body>
 </html>

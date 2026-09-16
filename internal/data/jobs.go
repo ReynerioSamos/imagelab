@@ -1,11 +1,18 @@
 package data
 
 import "time"
-//  Not used yet, mostly preparing the shape that jobs will eventually take once
-// a proper worker exists
+
+// Job mirrors the jobs table (migrations/000003). Week 1 prepares this
+// shape only; the claiming and state-transition methods (ClaimNext,
+// MarkCompleted, MarkFailed) arrive in Week 2 alongside the worker that
+// calls them.
+//
+// The nullable timestamps are pointers so that "not yet reached" is
+// distinguishable from a zero time: StartedAt == nil means the job is
+// still queued, CompletedAt == nil means it has not finished.
 type Job struct {
-	ID           int64      `json:"id"`
-	ImageID      int64      `json:"image_id"`
+	ID           string     `json:"id"`
+	ImageID      string     `json:"image_id"`
 	Status       string     `json:"status"`
 	ErrorMessage *string    `json:"error_message,omitempty"`
 	QueuedAt     time.Time  `json:"queued_at"`
