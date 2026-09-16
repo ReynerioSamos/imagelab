@@ -88,7 +88,6 @@ func (w *Worker) executeJob(job *data.Job) error {
 		return fmt.Errorf("failed to get image record: %w", err)
 	}
 
-	// Ensure variants directory exists
 	variantDir := filepath.Join(w.storageRoot, "variants")
 	if err := os.MkdirAll(variantDir, 0755); err != nil {
 		return fmt.Errorf("failed to create variants directory: %w", err)
@@ -106,17 +105,28 @@ func (w *Worker) executeJob(job *data.Job) error {
 		return fmt.Errorf("failed to decode image: %w", err)
 	}
 
+	// Define variant processing specifications
 	targets := []struct {
 		name      string
-		maxDim    int
+		maxW      int
+		maxH      int
+		cropSquare bool
 	}{
-		{"thumbnail", 150},
-		{"preview", 600},
-		{"display", 1200},
+		{name: "thumbnail", maxW: 150, maxH: 150, cropSquare: true},
+		{name: "preview", maxW: 800, maxH: 600, cropSquare: false},
+		{name: "display", maxW: 1200, maxH: 900, cropSquare: false},
 	}
 
 	for _, target := range targets {
-		resizedImg := resizePreserveAspect(srcImg, target.maxDim)
+		var resizedImg image.Image
+		if target.cropSquare {
+			// Center-crop to 150x150 exact square
+			resizedImg = cropCenterSquare(srcImg, target.maxW)
+		} else {
+			// Fit within bounding box preserving aspect ratio (IMG-02, IMG-04)
+			resizedImg = resizeFitBounds(srcImg, target.maxW, target.maxH)
+		}
+
 		bounds := resizedImg.Bounds()
 		width, height := bounds.Dx(), bounds.Dy()
 
@@ -155,12 +165,60 @@ func (w *Worker) executeJob(job *data.Job) error {
 			SizeBytes:      fi.Size(),
 		}
 
+		// Insert variant record (IMG-03)
 		if err := w.models.Variants.Insert(variant); err != nil {
 			return fmt.Errorf("failed to insert variant record: %w", err)
 		}
 	}
 
+	// IMG-03: Completed only after all 3 variants and metadata are successfully written
 	return nil
+}
+
+// cropCenterSquare crops the central square from src and resizes to targetDim x targetDim
+func cropCenterSquare(src image.Image, targetDim int) image.Image {
+	bounds := src.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+
+	minDim := w
+	if h < minDim {
+		minDim = h
+	}
+
+	// Calculate center crop origin
+	startX := bounds.Min.X + (w-minDim)/2
+	startY := bounds.Min.Y + (h-minDim)/2
+	cropRect := image.Rect(startX, startY, startX+minDim, startY+minDim)
+
+	dst := image.NewRGBA(image.Rect(0, 0, targetDim, targetDim))
+	draw.BiLinear.Scale(dst, dst.Bounds(), src, cropRect, draw.Over, nil)
+	return dst
+}
+
+// resizeFitBounds scales down src to fit inside maxW x maxH while preserving aspect ratio (IMG-02)
+func resizeFitBounds(src image.Image, maxW, maxH int) image.Image {
+	bounds := src.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+
+	if w <= maxW && h <= maxH {
+		return src
+	}
+
+	ratioW := float64(maxW) / float64(w)
+	ratioH := float64(maxH) / float64(h)
+
+	// Pick smaller ratio to ensure fitting within bounding box
+	ratio := ratioW
+	if ratioH < ratio {
+		ratio = ratioH
+	}
+
+	newW := int(float64(w) * ratio)
+	newH := int(float64(h) * ratio)
+
+	dst := image.NewRGBA(image.Rect(0, 0, newW, newH))
+	draw.BiLinear.Scale(dst, dst.Bounds(), src, bounds, draw.Over, nil)
+	return dst
 }
 
 func resizePreserveAspect(src image.Image, maxDim int) image.Image {

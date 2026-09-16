@@ -1,10 +1,4 @@
-// ImageLab frontend -- Week 1 scope.
-//
-// Implements UI-01..UI-09: an empty initial state, a browser-owned local
-// preview on selection (no network activity), and a guarded single
-// submission. The job timeline, polling indicator and results grid exist
-// in the markup but stay inert until Week 2 (job creation) and Week 3
-// (one-second short polling) are built.
+// app_2.js - Full Week 3 implementation
 
 const els = {
   fileInput:        document.getElementById("file-input"),
@@ -18,27 +12,34 @@ const els = {
   processLabel:     document.getElementById("process-button-label"),
   uploadMessage:    document.getElementById("upload-message"),
 
-  // Week 2 elements
+  // Job & Polling elements
   jobIdle:          document.getElementById("job-idle"),
   jobActive:        document.getElementById("job-active"),
   jobId:            document.getElementById("job-id"),
   statusBadge:      document.getElementById("status-badge"),
+  timeline:         document.getElementById("timeline"),
+  pollingIndicator: document.getElementById("polling-indicator"),
+  retrievalError:   document.getElementById("retrieval-error"),
+  tryAgainButton:   document.getElementById("try-again-button"),
+
+  // Results elements
+  resultsEmpty:     document.getElementById("results-empty"),
+  resultsGrid:      document.getElementById("results-grid"),
 };
 
 let selectedFile = null;
-let isSubmitting = false; // SUB-02: guard held independently of the button's disabled attribute
+let isSubmitting = false;
 let previewUrl = null;
+let pollTimer = null;
+let activeStatusUrl = null;
 
-// Client-side limits are for fast feedback only. The server re-checks all
-// of this (VAL-02) and is the authority -- these values get replaced by
-// whatever GET /v1/upload-constraints reports.
 let constraints = {
   acceptedMediaTypes: ["image/jpeg", "image/png"],
   acceptedExtensions: [".jpg", ".jpeg", ".png"],
   maxBytes: 10 * 1024 * 1024,
 };
 
-/* ---------------- helpers ---------------- */
+/* ---------------- Helpers ---------------- */
 
 function formatBytes(bytes) {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -52,8 +53,6 @@ function shortTypeLabel(mime) {
   return mime || "unknown";
 }
 
-// All user-facing text is set with textContent, never innerHTML, so a
-// hostile filename cannot inject markup (Section 13, Minimum Safeguards).
 function showMessage(text, tone) {
   els.uploadMessage.textContent = text;
   els.uploadMessage.dataset.tone = tone;
@@ -66,21 +65,15 @@ function clearMessage() {
 }
 
 function renderConstraintsNote() {
-  const exts = constraints.acceptedExtensions
-    .map((e) => e.replace(".", "").toUpperCase());
+  const exts = constraints.acceptedExtensions.map((e) => e.replace(".", "").toUpperCase());
   const unique = [...new Set(exts)].join(" or ");
-  els.constraintsNote.textContent =
-    `${unique} \u00b7 up to ${formatBytes(constraints.maxBytes)}`;
+  els.constraintsNote.textContent = `${unique} \u00b7 up to ${formatBytes(constraints.maxBytes)}`;
 }
 
-/* -------- constraints come from the server -------- */
-
-// Fetching the rules rather than hardcoding them keeps the disclaimer in
-// the UI and the validation in the handler from ever disagreeing.
 async function loadConstraints() {
   try {
     const res = await fetch("/v1/upload-constraints");
-    if (!res.ok) return; // keep the built-in defaults
+    if (!res.ok) return;
     const body = await res.json();
     constraints = {
       acceptedMediaTypes: body.accepted_media_types ?? constraints.acceptedMediaTypes,
@@ -89,20 +82,27 @@ async function loadConstraints() {
     };
     els.fileInput.setAttribute("accept", constraints.acceptedMediaTypes.join(","));
     renderConstraintsNote();
-  } catch {
-    // Offline or server not ready -- the defaults above still describe
-    // the contract correctly, so there is nothing to surface to the user.
-  }
+  } catch {}
 }
 
-/* ---------------- state transitions ---------------- */
+/* ---------------- State Reset ---------------- */
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  if (els.pollingIndicator) els.pollingIndicator.hidden = true;
+}
 
 function resetToInitialState() {
+  stopPolling();
   selectedFile = null;
+  activeStatusUrl = null;
   els.fileInput.value = "";
 
   if (previewUrl) {
-    URL.revokeObjectURL(previewUrl); // release the blob; it is not garbage collected on its own
+    URL.revokeObjectURL(previewUrl);
     previewUrl = null;
   }
   els.previewImg.removeAttribute("src");
@@ -110,7 +110,7 @@ function resetToInitialState() {
   els.dropzoneSelected.hidden = true;
   els.dropzoneEmpty.hidden = false;
 
-  els.processButton.disabled = true; // UI-02
+  els.processButton.disabled = true;
   els.processLabel.textContent = "Process image";
 
   if (els.jobIdle) els.jobIdle.hidden = false;
@@ -119,39 +119,135 @@ function resetToInitialState() {
     els.statusBadge.className = "badge badge-idle";
     els.statusBadge.textContent = "Idle";
   }
+
+  els.resultsEmpty.hidden = false;
+  els.resultsGrid.hidden = true;
+  els.resultsGrid.innerHTML = "";
+  if (els.retrievalError) els.retrievalError.hidden = true;
 }
 
 function showSelected(file) {
   selectedFile = file;
-
   if (previewUrl) URL.revokeObjectURL(previewUrl);
-  previewUrl = URL.createObjectURL(file); // UI-05: preview is browser-owned, nothing is uploaded
+  previewUrl = URL.createObjectURL(file);
   els.previewImg.src = previewUrl;
 
   els.metaFilename.textContent = file.name;
-
-  // Dimensions are read from the decoded preview, so the line fills in
-  // once the browser has the image -- it never requires the server.
   els.metaLine.textContent = `${formatBytes(file.size)} \u00b7 ${shortTypeLabel(file.type)}`;
   els.previewImg.onload = () => {
     const w = els.previewImg.naturalWidth;
     const h = els.previewImg.naturalHeight;
     if (w && h) {
-      els.metaLine.textContent =
-        `${formatBytes(file.size)} \u00b7 ${shortTypeLabel(file.type)} \u00b7 ${w} \u00d7 ${h}`;
+      els.metaLine.textContent = `${formatBytes(file.size)} \u00b7 ${shortTypeLabel(file.type)} \u00b7 ${w} \u00d7 ${h}`;
     }
   };
 
   els.dropzoneEmpty.hidden = true;
   els.dropzoneSelected.hidden = false;
-
   els.processButton.disabled = false;
 }
 
-/* ---------------- selection ---------------- */
+/* ---------------- Polling & Variant Rendering ---------------- */
 
-// UI-06: selecting a file only builds a local preview. No request is
-// sent, no job is created, and no polling starts.
+function updateTimeline(job) {
+  const steps = els.timeline.querySelectorAll(".tl-step");
+  const status = job.status;
+
+  steps.forEach((step) => {
+    const name = step.dataset.step;
+    if (status === "queued") {
+      if (name === "accepted") step.dataset.state = "done";
+      else step.dataset.state = "pending";
+    } else if (status === "processing") {
+      if (name === "accepted" || name === "stored") step.dataset.state = "done";
+      else if (name === "generating") step.dataset.state = "active";
+      else step.dataset.state = "pending";
+    } else if (status === "completed") {
+      step.dataset.state = "done";
+    } else if (status === "failed") {
+      if (name === "complete") step.dataset.state = "pending";
+    }
+  });
+}
+
+function renderVariants(variants) {
+  els.resultsGrid.innerHTML = "";
+  
+  // Sort variants: thumbnail, preview, display
+  const order = { thumbnail: 1, preview: 2, display: 3 };
+  variants.sort((a, b) => (order[a.name] || 99) - (order[b.name] || 99));
+
+  variants.forEach((variant) => {
+    const card = document.createElement("div");
+    card.className = "variant-card";
+
+    const title = variant.name.charAt(0).toUpperCase() + variant.name.slice(1);
+    
+    card.innerHTML = `
+      <div class="variant-media">
+        <img src="${variant.url}" alt="${variant.name} variant" loading="lazy" />
+      </div>
+      <div class="variant-body">
+        <div>
+          <p class="variant-name">${title}</p>
+          <p class="variant-dims">${variant.width} \u00d7 ${variant.height} px</p>
+        </div>
+        <a href="${variant.url}" download class="variant-download" title="Download ${title}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </a>
+      </div>
+    `;
+    els.resultsGrid.appendChild(card);
+  });
+
+  els.resultsEmpty.hidden = true;
+  els.resultsGrid.hidden = false;
+}
+
+async function pollJobStatus() {
+  if (!activeStatusUrl) return;
+
+  try {
+    const res = await fetch(activeStatusUrl);
+    if (!res.ok) throw new Error("Failed to fetch status");
+
+    const data = await res.json();
+    const job = data.job;
+
+    if (els.retrievalError) els.retrievalError.hidden = true;
+
+    // Update badge & timeline
+    els.statusBadge.className = `badge badge-${job.status}`;
+    els.statusBadge.textContent = job.status.charAt(0).toUpperCase() + job.status.slice(1);
+    updateTimeline(job);
+
+    if (job.status === "completed") {
+      stopPolling();
+      if (job.variants && job.variants.length > 0) {
+        renderVariants(job.variants);
+      }
+      showMessage("Job completed successfully!", "success");
+    } else if (job.status === "failed") {
+      stopPolling();
+      showMessage(`Job failed: ${job.error || "Processing failed."}`, "error");
+    }
+  } catch (err) {
+    if (els.retrievalError) els.retrievalError.hidden = false;
+  }
+}
+
+function startPolling(statusUrl) {
+  stopPolling();
+  activeStatusUrl = statusUrl;
+  els.pollingIndicator.hidden = false;
+  pollJobStatus(); // Immediate first check
+  pollTimer = setInterval(pollJobStatus, 1000); // 1-second short polling
+}
+
+/* ---------------- Event Listeners ---------------- */
+
 els.fileInput.addEventListener("change", () => {
   const file = els.fileInput.files[0];
   clearMessage();
@@ -161,37 +257,21 @@ els.fileInput.addEventListener("change", () => {
     return;
   }
 
-  // These two checks are a usability courtesy only -- a user can bypass
-  // them entirely (curl, devtools, a renamed file), which is exactly why
-  // the server decodes the bytes itself before accepting anything.
   if (!constraints.acceptedMediaTypes.includes(file.type)) {
     resetToInitialState();
-    showMessage(
-      `"${file.name}" is not a supported image. Choose a JPEG or PNG file.`,
-      "error"
-    );
+    showMessage(`"${file.name}" is not a supported image. Choose a JPEG or PNG file.`, "error");
     return;
   }
 
   if (file.size > constraints.maxBytes) {
     resetToInitialState();
-    showMessage(
-      `"${file.name}" is ${formatBytes(file.size)}, which is over the ` +
-      `${formatBytes(constraints.maxBytes)} limit.`,
-      "error"
-    );
+    showMessage(`"${file.name}" is ${formatBytes(file.size)}, which is over the ${formatBytes(constraints.maxBytes)} limit.`, "error");
     return;
   }
 
-  showSelected(file); // UI-07: choosing again simply replaces the selection
+  showSelected(file);
 });
 
-/* ---------------- submission ---------------- */
-
-// UI-08 / UI-09 / SUB-01 / SUB-02: exactly one POST may be in flight.
-// The button is disabled synchronously *before* awaiting fetch, and
-// isSubmitting guards the handler itself, so neither a rapid double-click
-// nor a re-entrant call can start a second upload.
 els.processButton.addEventListener("click", async () => {
   if (isSubmitting || !selectedFile) return;
 
@@ -206,38 +286,25 @@ els.processButton.addEventListener("click", async () => {
 
     const response = await fetch("/v1/images", { method: "POST", body: formData });
 
-    // The server's rejection message is authoritative and more specific
-    // than anything the browser checked (e.g. a GIF renamed to .png), so
-    // it is surfaced directly rather than replaced with a generic string.
     if (!response.ok) {
       let detail = `Upload failed (HTTP ${response.status}).`;
       try {
         const body = await response.json();
         if (typeof body.error === "string") detail = body.error;
-      } catch {
-        /* non-JSON body: keep the status-based message */
-      }
+      } catch {}
       throw new Error(detail);
     }
 
     const result = await response.json();
 
-    // Week 2 Scope: Render the 202 response details without starting polling.
     els.jobIdle.hidden = true;
     els.jobActive.hidden = false;
     els.jobId.textContent = result.job_id;
 
-    els.statusBadge.className = `badge badge-${result.status || "queued"}`;
-    els.statusBadge.textContent =
-      (result.status || "queued").charAt(0).toUpperCase() +
-      (result.status || "queued").slice(1);
+    // Begin short polling
+    startPolling(result.status_url);
 
-    showMessage(
-      `Upload accepted (202 Accepted). Job ID ${result.job_id} created. Status URL: ${result.status_url}`,
-      "success"
-    );
   } catch (err) {
-    // SUB-03: a rejected upload must leave the user able to try again.
     showMessage(err.message || "Upload failed. Please try again.", "error");
   } finally {
     isSubmitting = false;
@@ -246,8 +313,12 @@ els.processButton.addEventListener("click", async () => {
   }
 });
 
-/* ---------------- init ---------------- */
+if (els.tryAgainButton) {
+  els.tryAgainButton.addEventListener("click", pollJobStatus);
+}
 
-resetToInitialState(); // UI-01, UI-03, UI-04
+/* ---------------- Init ---------------- */
+
+resetToInitialState();
 renderConstraintsNote();
 loadConstraints();
