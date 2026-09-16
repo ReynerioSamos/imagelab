@@ -48,6 +48,5 @@ services:
     restart: unless-stopped
     command: /app/api -db-dsn="postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable"
 
-# FIXED: Only named volumes are declared here
 volumes:
   pgdata:

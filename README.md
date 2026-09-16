@@ -1,5 +1,6 @@
 # ImageLab -- Version 1
 Reynerio Samos - 2018119235
+Chahiim Pop - 2020152199
 
 CMPS 4191 - Advanced Web Technologies - Test 1
 
@@ -258,47 +259,84 @@ flowchart LR
 
 ## Prerequisites and Setup
 
-- Go Version 1.22
-- PostgreSQL
-- The `migrate` CLI (`golang-migrate`):
-  ```bash
-  go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-  ```
+- Git for cloning repo
 - Web browser able to open HTML pages
+- Docker Compose
+
+#### Installing Docker Compose (Ubuntu)
+Removing conflicting packages
+```bash
+sudo apt remove docker.io docker-compose docker-compose-v2 docker-doc docker-buildx podman-docker containerd runc
+```
+Installing Docker's GPG key
+```bash
+sudo apt update
+sudo apt install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+```
+
+Adding Docker repo
+```bash
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt update
+```
+
+Installing Docker Engine and Compose
+```bash
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+Starting Docker Service
+```bash
+sudo service docker start
+```
+
+Giving Docker user sudo
+```bash
+sudo usermod -aG docker $USER
+```
+
+Applying group change
+
+
+Verify
+```bash
+docker --version
+docker compose version
+docker run hello-world
+
+```
 
 ### Setup
 
-1. Create a database and user:
-   ```bash
-   sudo -u postgres psql -c "CREATE USER imagelab WITH PASSWORD 'imagelabpass';"
-   sudo -u postgres psql -c "CREATE DATABASE imagelab OWNER imagelab;"
-   ```
+1. Clone repo
+```bash
+git clone https://github.com/ReynerioSamos/imagelab.git
+```
 
-2. Copy the environment template and edit it if your credentials differ:
-   ```bash
-   cp .envrc.example .envrc
-   source .envrc
-   ```
+2. Build Docker Image
+```bash
+docker compose up --build
+```
+This will:
+- Build the Go API and pull migration tool
+- Start a PostgreSQL container
+- Run DB migrations
+- Start the Go API on port `4000`
 
-3. Apply migrations:
-   ```bash
-   migrate -path ./migrations -database "$IMAGELAB_DB_DSN" up
-   ```
+What you should see:
+```bash
+✔ Container imagelab_db       Healthy
+✔ Container imagelab_migrate  Exited (0)      ← Migrations ran successfully
+✔ Container imagelab_api      Started
+imagelab_api  | level=INFO msg="database connection pool established"
+imagelab_api  | level=INFO msg="starting server" addr=:4000
+```
 
-4. Fetch dependencies:
-   ```bash
-   go mod tidy
-   ```
-
-5. Run the server:
-   ```bash
-   go run ./cmd/api -db-dsn="$IMAGELAB_DB_DSN"
-   ```
-
-6. Open the app:
-   ```
-   http://localhost:4000
-   ```
-
-
+3. Open the application @ `http://localhost:4000`
 ---
