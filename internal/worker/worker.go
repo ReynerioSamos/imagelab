@@ -83,6 +83,11 @@ func (w *Worker) processNextJob(ctx context.Context) {
 }
 
 func (w *Worker) executeJob(job *data.Job) error {
+	/*
+	// early return to simulate failed job
+	return fmt.Errorf("artificial worker error triggered for testing")
+	*/
+
 	imgRecord, err := w.models.Images.Get(job.ImageID)
 	if err != nil {
 		return fmt.Errorf("failed to get image record: %w", err)
@@ -118,6 +123,9 @@ func (w *Worker) executeJob(job *data.Job) error {
 	}
 
 	for _, target := range targets {
+		// Artificial delay per variant
+		time.Sleep(8 * time.Second)
+
 		var resizedImg image.Image
 		if target.cropSquare {
 			// Center-crop to 150x150 exact square
