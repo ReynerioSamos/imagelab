@@ -10,7 +10,6 @@ CREATE TYPE job_status AS ENUM ('queued', 'processing', 'completed', 'failed');
 
 -- Note on UUID generation: gen_random_uuid() has been built into
 -- PostgreSQL core since version 13, so no CREATE EXTENSION is required
--- here. (Gatekeeper needed shim functions only because its migrations
--- called uuidv7()/uuidv4(), which are PG18+ names.)
+-- here. 
 
 COMMIT;
