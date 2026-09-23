@@ -83,10 +83,10 @@ func (w *Worker) processNextJob(ctx context.Context) {
 }
 
 func (w *Worker) executeJob(job *data.Job) error {
-	/*
+	
 	// early return to simulate failed job
 	return fmt.Errorf("artificial worker error triggered for testing")
-	*/
+	
 
 	imgRecord, err := w.models.Images.Get(job.ImageID)
 	if err != nil {

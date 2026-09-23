@@ -174,6 +174,15 @@ function showSelected(file) {
 
 /* ---------------- Polling & Variant Rendering ---------------- */
 
+/* Helper to format ISO timestamps */
+function formatTimestamp(isoString) {
+  if (!isoString) return "";
+  const date = new Date(isoString);
+  if (isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+/* 1. Timestamps for Polling Responses */
 function updateTimeline(job) {
   const steps = els.timeline.querySelectorAll(".tl-step");
   const status = job.status;
@@ -194,25 +203,28 @@ function updateTimeline(job) {
     }
   });
 
-  const timeMap = {
-    queued: job.queued_at,
-    started: job.started_at,
-    completed: job.completed_at,
-    failed: job.failed_at,
-  };
+  // Populate stage timestamps from polling response payload
+  const timeAccepted = document.getElementById("tl-time-accepted");
+  const timeStored = document.getElementById("tl-time-stored");
+  const timeGenerating = document.getElementById("tl-time-generating");
+  const timeComplete = document.getElementById("tl-time-complete");
 
-  Object.entries(timeMap).forEach(([stage, timestamp]) => {
-    if (timestamp) {
-      const span = els.timeline.querySelector(`.tl-time[data-stage="${stage}"]`) ||
-                   els.timeline.querySelector(`.tl-time.${stage}`) ||
-                   document.getElementById(`tl-time-${stage}`);
-      if (span) {
-        span.textContent = formatTimestamp(timestamp);
-      }
+  if (timeAccepted && job.queued_at) timeAccepted.textContent = formatTimestamp(job.queued_at);
+  if (timeStored && job.queued_at) timeStored.textContent = formatTimestamp(job.queued_at);
+  if (timeGenerating && job.started_at) timeGenerating.textContent = formatTimestamp(job.started_at);
+  
+  if (timeComplete) {
+    if (job.status === "completed" && job.completed_at) {
+      timeComplete.textContent = formatTimestamp(job.completed_at);
+    } else if (job.status === "failed" && job.failed_at) {
+      timeComplete.textContent = `Failed at ${formatTimestamp(job.failed_at)}`;
+    } else {
+      timeComplete.textContent = "Pending";
     }
-  });
+  }
 }
 
+/* Per-variant Progressive Status Updates */
 function updateVariantChecklist(jobVariants = [], jobStatus = "queued") {
   if (!els.checklistItems) return;
 
@@ -229,7 +241,8 @@ function updateVariantChecklist(jobVariants = [], jobStatus = "queued") {
   let html = "";
 
   EXPECTED_VARIANTS.forEach((name) => {
-    let status = activeMap.get(name) || "pending";
+    // If completed or present in response payload, display status as ready
+    let status = activeMap.get(name) || (jobStatus === "processing" ? "processing" : "pending");
     if (jobStatus === "completed") status = "completed";
     const isDone = status === "completed";
 
@@ -299,6 +312,7 @@ function renderVariants(variants) {
   els.resultsGrid.hidden = false;
 }
 
+/* Progressive Render of Completed Variant Badges in Results Grid */
 async function pollJobStatus() {
   if (!activeStatusUrl) return;
 
@@ -317,14 +331,17 @@ async function pollJobStatus() {
     els.statusBadge.className = `badge badge-${job.status}`;
     els.statusBadge.textContent = job.status.charAt(0).toUpperCase() + job.status.slice(1);
     
+    // Updates UI elements
     updateTimeline(job);
     updateVariantChecklist(job.variants || [], job.status);
 
+    // Progressively display completed variants as they arrive during polling
+    if (job.variants && job.variants.length > 0) {
+      renderVariants(job.variants);
+    }
+
     if (job.status === "completed") {
       stopPolling();
-      if (job.variants && job.variants.length > 0) {
-        renderVariants(job.variants);
-      }
       showMessage("Job completed successfully!", "success");
     } else if (job.status === "failed") {
       stopPolling();
@@ -420,10 +437,26 @@ els.processButton.addEventListener("click", async () => {
   }
 });
 
+// try again reprocess button (for failed jobs) - calls reprocess endpoint with existing job ID
 if (els.tryAgainButton) {
-  els.tryAgainButton.addEventListener("click", () => {
-    if (activeStatusUrl) {
-      startPolling(activeStatusUrl);
+  els.tryAgainButton.addEventListener("click", async () => {
+    if (!currentJobId) return;
+
+    try {
+      // Calls reprocess endpoint using existing job ID (JSON payload, no binary upload)
+      const res = await fetch(`/v1/jobs/${currentJobId}/reprocess`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+
+      if (!res.ok) throw new Error("Failed to reprocess job");
+
+      const data = await res.json();
+      
+      // Reset UI state and start polling the NEW job ID
+      startPolling(data.status_url);
+    } catch (err) {
+      showMessage(err.message, "error");
     }
   });
 }

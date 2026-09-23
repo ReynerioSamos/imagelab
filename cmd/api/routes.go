@@ -22,5 +22,7 @@ func (app *application) routes() http.Handler {
 	// and API share one origin -- no CORS configuration needed.
 	mux.Handle("/", http.FileServer(http.Dir("./frontend")))
 
+	// Week 3: Reprocess an image by creating a new job for the same image.
+	mux.HandleFunc("POST /v1/jobs/{job_id}/reprocess", app.reprocessJobHandler)
 	return mux
 }

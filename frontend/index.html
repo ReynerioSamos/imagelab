@@ -114,23 +114,35 @@
         <p id="job-id" class="job-id"></p>
 
         <ol class="timeline" id="timeline">
-          <li class="tl-step" data-step="accepted">
-            <span class="tl-marker"></span>
-            <span class="tl-body"><span class="tl-title">Upload accepted</span><span class="tl-time"></span></span>
-          </li>
-          <li class="tl-step" data-step="stored">
-            <span class="tl-marker"></span>
-            <span class="tl-body"><span class="tl-title">Original stored</span><span class="tl-time"></span></span>
-          </li>
-          <li class="tl-step" data-step="generating">
-            <span class="tl-marker"></span>
-            <span class="tl-body"><span class="tl-title">Generating variants</span><span class="tl-time"></span></span>
-          </li>
-          <li class="tl-step" data-step="complete">
-            <span class="tl-marker"></span>
-            <span class="tl-body"><span class="tl-title">Complete</span><span class="tl-time">Pending</span></span>
-          </li>
-        </ol>
+  <li class="tl-step" data-step="accepted">
+    <span class="tl-marker"></span>
+    <span class="tl-body">
+      <span class="tl-title">Upload accepted</span>
+      <span class="tl-time" id="tl-time-accepted"></span>
+    </span>
+  </li>
+  <li class="tl-step" data-step="stored">
+    <span class="tl-marker"></span>
+    <span class="tl-body">
+      <span class="tl-title">Original stored</span>
+      <span class="tl-time" id="tl-time-stored"></span>
+    </span>
+  </li>
+  <li class="tl-step" data-step="generating">
+    <span class="tl-marker"></span>
+    <span class="tl-body">
+      <span class="tl-title">Generating variants</span>
+      <span class="tl-time" id="tl-time-generating"></span>
+    </span>
+  </li>
+  <li class="tl-step" data-step="complete">
+    <span class="tl-marker"></span>
+    <span class="tl-body">
+      <span class="tl-title">Complete</span>
+      <span class="tl-time" id="tl-time-complete">Pending</span>
+    </span>
+  </li>
+</ol>
 
         <!-- Live status checklist for individual variants -->
 <div id="variant-checklist" class="variant-checklist">
