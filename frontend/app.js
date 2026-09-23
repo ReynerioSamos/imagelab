@@ -1,4 +1,4 @@
-// app_2.js - Full Week 3 implementation
+// app.js - Full implementation with dynamic per-variant status checklist
 
 const els = {
   fileInput:        document.getElementById("file-input"),
@@ -18,6 +18,7 @@ const els = {
   jobId:            document.getElementById("job-id"),
   statusBadge:      document.getElementById("status-badge"),
   timeline:         document.getElementById("timeline"),
+  checklistItems:   document.getElementById("checklist-items"),
   pollingIndicator: document.getElementById("polling-indicator"),
   retrievalError:   document.getElementById("retrieval-error"),
   tryAgainButton:   document.getElementById("try-again-button"),
@@ -30,7 +31,10 @@ const els = {
 let selectedFile = null;
 let isSubmitting = false;
 let previewUrl = null;
-let pollTimer = null;
+
+// Polling and Abort state
+let pollTimeoutId = null;
+let pollController = null;
 let activeStatusUrl = null;
 
 let constraints = {
@@ -38,6 +42,8 @@ let constraints = {
   acceptedExtensions: [".jpg", ".jpeg", ".png"],
   maxBytes: 10 * 1024 * 1024,
 };
+
+const EXPECTED_VARIANTS = ["Thumbnail", "Preview", "Display"];
 
 /* ---------------- Helpers ---------------- */
 
@@ -85,12 +91,23 @@ async function loadConstraints() {
   } catch {}
 }
 
+function formatTimestamp(isoString) {
+  if (!isoString) return "";
+  const date = new Date(isoString);
+  if (isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
 /* ---------------- State Reset ---------------- */
 
 function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
+  if (pollTimeoutId !== null) {
+    clearTimeout(pollTimeoutId);
+    pollTimeoutId = null;
+  }
+  if (pollController) {
+    pollController.abort();
+    pollController = null;
   }
   if (els.pollingIndicator) els.pollingIndicator.hidden = true;
 }
@@ -123,7 +140,15 @@ function resetToInitialState() {
   els.resultsEmpty.hidden = false;
   els.resultsGrid.hidden = true;
   els.resultsGrid.innerHTML = "";
+  if (els.checklistItems) els.checklistItems.innerHTML = "";
   if (els.retrievalError) els.retrievalError.hidden = true;
+
+  // Clear timeline timestamps
+  if (els.timeline) {
+    els.timeline.querySelectorAll(".tl-time").forEach((span) => {
+      span.textContent = "";
+    });
+  }
 }
 
 function showSelected(file) {
@@ -168,12 +193,75 @@ function updateTimeline(job) {
       if (name === "complete") step.dataset.state = "pending";
     }
   });
+
+  const timeMap = {
+    queued: job.queued_at,
+    started: job.started_at,
+    completed: job.completed_at,
+    failed: job.failed_at,
+  };
+
+  Object.entries(timeMap).forEach(([stage, timestamp]) => {
+    if (timestamp) {
+      const span = els.timeline.querySelector(`.tl-time[data-stage="${stage}"]`) ||
+                   els.timeline.querySelector(`.tl-time.${stage}`) ||
+                   document.getElementById(`tl-time-${stage}`);
+      if (span) {
+        span.textContent = formatTimestamp(timestamp);
+      }
+    }
+  });
+}
+
+function updateVariantChecklist(jobVariants = [], jobStatus = "queued") {
+  if (!els.checklistItems) return;
+
+  const activeMap = new Map();
+  jobVariants.forEach((v) => {
+    const name = v.name.charAt(0).toUpperCase() + v.name.slice(1);
+    activeMap.set(name, v.status || "completed");
+  });
+
+  const totalExpected = EXPECTED_VARIANTS.length;
+  const completedCount = jobVariants.filter((v) => (v.status || "completed") === "completed").length;
+  const allDone = jobStatus === "completed" || completedCount === totalExpected;
+
+  let html = "";
+
+  EXPECTED_VARIANTS.forEach((name) => {
+    let status = activeMap.get(name) || "pending";
+    if (jobStatus === "completed") status = "completed";
+    const isDone = status === "completed";
+
+    html += `
+      <li class="checklist-item" data-status="${status}">
+        <span class="checklist-checkbox">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        </span>
+        <span>${name} variant (${isDone ? "Ready" : status})</span>
+      </li>
+    `;
+  });
+
+  html += `
+    <li class="checklist-item" data-status="${allDone ? "completed" : "pending"}" style="margin-top: 0.3rem; font-weight: 600;">
+      <span class="checklist-checkbox">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+      </span>
+      <span>${allDone ? "All variants completed" : "Processing variants..."}</span>
+    </li>
+  `;
+
+  els.checklistItems.innerHTML = html;
 }
 
 function renderVariants(variants) {
   els.resultsGrid.innerHTML = "";
   
-  // Sort variants: thumbnail, preview, display
   const order = { thumbnail: 1, preview: 2, display: 3 };
   variants.sort((a, b) => (order[a.name] || 99) - (order[b.name] || 99));
 
@@ -182,14 +270,19 @@ function renderVariants(variants) {
     card.className = "variant-card";
 
     const title = variant.name.charAt(0).toUpperCase() + variant.name.slice(1);
-    
+    const variantStatus = variant.status || "completed";
+    const statusLabel = variantStatus.charAt(0).toUpperCase() + variantStatus.slice(1);
+
     card.innerHTML = `
       <div class="variant-media">
         <img src="${variant.url}" alt="${variant.name} variant" loading="lazy" />
       </div>
       <div class="variant-body">
         <div>
-          <p class="variant-name">${title}</p>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <p class="variant-name">${title}</p>
+            <span class="badge badge-${variantStatus.toLowerCase()}">${statusLabel}</span>
+          </div>
           <p class="variant-dims">${variant.width} \u00d7 ${variant.height} px</p>
         </div>
         <a href="${variant.url}" download class="variant-download" title="Download ${title}">
@@ -210,18 +303,22 @@ async function pollJobStatus() {
   if (!activeStatusUrl) return;
 
   try {
-    const res = await fetch(activeStatusUrl);
-    if (!res.ok) throw new Error("Failed to fetch status");
+    const res = await fetch(activeStatusUrl, {
+      signal: pollController ? pollController.signal : undefined,
+    });
+
+    if (!res.ok) throw new Error("Unable to check status");
 
     const data = await res.json();
     const job = data.job;
 
     if (els.retrievalError) els.retrievalError.hidden = true;
 
-    // Update badge & timeline
     els.statusBadge.className = `badge badge-${job.status}`;
     els.statusBadge.textContent = job.status.charAt(0).toUpperCase() + job.status.slice(1);
+    
     updateTimeline(job);
+    updateVariantChecklist(job.variants || [], job.status);
 
     if (job.status === "completed") {
       stopPolling();
@@ -232,8 +329,13 @@ async function pollJobStatus() {
     } else if (job.status === "failed") {
       stopPolling();
       showMessage(`Job failed: ${job.error || "Processing failed."}`, "error");
+    } else {
+      pollTimeoutId = setTimeout(pollJobStatus, 1000);
     }
   } catch (err) {
+    if (err.name === "AbortError") return;
+
+    stopPolling();
     if (els.retrievalError) els.retrievalError.hidden = false;
   }
 }
@@ -241,9 +343,15 @@ async function pollJobStatus() {
 function startPolling(statusUrl) {
   stopPolling();
   activeStatusUrl = statusUrl;
-  els.pollingIndicator.hidden = false;
-  pollJobStatus(); // Immediate first check
-  pollTimer = setInterval(pollJobStatus, 1000); // 1-second short polling
+  pollController = new AbortController();
+
+  if (els.retrievalError) els.retrievalError.hidden = true;
+  if (els.pollingIndicator) els.pollingIndicator.hidden = false;
+
+  // Render initial pending state for checklist
+  updateVariantChecklist([], "queued");
+
+  pollJobStatus();
 }
 
 /* ---------------- Event Listeners ---------------- */
@@ -301,7 +409,6 @@ els.processButton.addEventListener("click", async () => {
     els.jobActive.hidden = false;
     els.jobId.textContent = result.job_id;
 
-    // Begin short polling
     startPolling(result.status_url);
 
   } catch (err) {
@@ -314,8 +421,16 @@ els.processButton.addEventListener("click", async () => {
 });
 
 if (els.tryAgainButton) {
-  els.tryAgainButton.addEventListener("click", pollJobStatus);
+  els.tryAgainButton.addEventListener("click", () => {
+    if (activeStatusUrl) {
+      startPolling(activeStatusUrl);
+    }
+  });
 }
+
+window.addEventListener("pagehide", () => {
+  stopPolling();
+});
 
 /* ---------------- Init ---------------- */
 
