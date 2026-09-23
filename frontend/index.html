@@ -53,10 +53,15 @@
 
         <!-- Selected state: UI-05 -->
         <div id="dropzone-selected" class="dropzone-selected" hidden>
+          <!-- Full-width preview image on top -->
           <img id="preview-img" class="preview-thumb" alt="Preview of the selected image" />
+          
+          <!-- File info and actions underneath -->
           <div class="selected-meta">
-            <p id="meta-filename" class="selected-name"></p>
-            <p id="meta-line" class="selected-line"></p>
+            <div class="selected-info">
+              <p id="meta-filename" class="selected-name"></p>
+              <p id="meta-line" class="selected-line"></p>
+            </div>
             <label for="file-input" class="btn btn-ghost btn-sm">
               <span class="btn-ico" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -68,7 +73,6 @@
             </label>
           </div>
         </div>
-      </div>
 
       <input type="file" id="file-input" accept="image/jpeg,image/png" />
 
