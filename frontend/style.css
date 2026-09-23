@@ -196,7 +196,7 @@ body {
 
 .preview-thumb {
   width: 100%;
-  max-height: 280px;
+  max-height: 440px;
   object-fit: contain; /* Preserves aspect ratio inside container */
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);

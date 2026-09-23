@@ -42,6 +42,8 @@ services:
     volumes:
       # FIXED: Matches the /app/storage path from your Dockerfile
       - ./storage:/app/storage
+      # CHANGED: Live-mount frontend so UI edits show without rebuilding the image
+      - ./frontend:/app/frontend
     depends_on:
       migrate:
         condition: service_completed_successfully

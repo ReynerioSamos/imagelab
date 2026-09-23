@@ -177,11 +177,19 @@ function renderVariants(variants) {
   const order = { thumbnail: 1, preview: 2, display: 3 };
   variants.sort((a, b) => (order[a.name] || 99) - (order[b.name] || 99));
 
+  // CHANGED: Force all generated images to display at the same size as the first one
+  // (code disabled below - no size changes applied)
+  // const firstWidth = variants[0]?.width;
+  // const firstHeight = variants[0]?.height;
+
   variants.forEach((variant) => {
     const card = document.createElement("div");
     card.className = "variant-card";
 
     const title = variant.name.charAt(0).toUpperCase() + variant.name.slice(1);
+    // CHANGED: Use first variant dimensions for all (disabled)
+    const dimsWidth = variant.width; // firstWidth ?? variant.width;
+    const dimsHeight = variant.height; // firstHeight ?? variant.height;
     
     card.innerHTML = `
       <div class="variant-media">
@@ -190,7 +198,7 @@ function renderVariants(variants) {
       <div class="variant-body">
         <div>
           <p class="variant-name">${title}</p>
-          <p class="variant-dims">${variant.width} \u00d7 ${variant.height} px</p>
+          <p class="variant-dims">${dimsWidth} \u00d7 ${dimsHeight} px</p>
         </div>
         <a href="${variant.url}" download class="variant-download" title="Download ${title}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

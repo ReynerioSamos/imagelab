@@ -110,6 +110,11 @@ func (w *Worker) executeJob(job *data.Job) error {
 		return fmt.Errorf("failed to decode image: %w", err)
 	}
 
+	// CHANGED: All 3 variants generated at the same size as the source image
+	// (original resize/crop targets disabled below)
+	srcBounds := srcImg.Bounds()
+	srcW, srcH := srcBounds.Dx(), srcBounds.Dy()
+
 	// Define variant processing specifications
 	targets := []struct {
 		name      string
@@ -117,9 +122,10 @@ func (w *Worker) executeJob(job *data.Job) error {
 		maxH      int
 		cropSquare bool
 	}{
-		{name: "thumbnail", maxW: 150, maxH: 150, cropSquare: true},
-		{name: "preview", maxW: 800, maxH: 600, cropSquare: false},
-		{name: "display", maxW: 1200, maxH: 900, cropSquare: false},
+		// original targets: {thumbnail: 150x150 square}, {preview: 800x600}, {display: 1200x900}
+		{name: "thumbnail", maxW: srcW, maxH: srcH, cropSquare: false},
+		{name: "preview", maxW: srcW, maxH: srcH, cropSquare: false},
+		{name: "display", maxW: srcW, maxH: srcH, cropSquare: false},
 	}
 
 	for _, target := range targets {
