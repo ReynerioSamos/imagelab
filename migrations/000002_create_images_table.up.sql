@@ -2,6 +2,8 @@
 
 BEGIN;
 
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";  -- for gen_random_uuid(); uuid-ossp is another option, but pgcrypto is more widely available.
+
 CREATE TABLE IF NOT EXISTS images (
     -- UUID rather than bigserial: the image id appears in client-facing
     -- URLs (GET /v1/images/{image_id}/variants/{name}), and a sequential

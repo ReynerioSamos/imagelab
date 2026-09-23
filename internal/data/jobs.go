@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Job mirrors the jobs table (migrations/000003). Week 1 prepares this
@@ -31,26 +33,31 @@ type JobModel struct {
 }
 
 func (m JobModel) Insert(imageID string) (*Job, error) {
-	query := `
-		INSERT INTO jobs (image_id, status)
-		VALUES ($1, 'queued')
-		RETURNING id, image_id, status, queued_at`
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	var job Job
-	err := m.DB.QueryRowContext(ctx, query, imageID).Scan(
-		&job.ID,
-		&job.ImageID,
-		&job.Status,
-		&job.QueuedAt,
-	)
+	// 1. Generate UUID v7
+	jobID, err := uuid.NewV7()
 	if err != nil {
 		return nil, err
 	}
 
-	return &job, nil
+	job := &Job{
+		ID:      jobID.String(), // Fixes: declared and not used: newID
+		ImageID: imageID,
+		Status:  "queued",
+	}
+
+	query := `
+		INSERT INTO jobs (id, image_id, status)
+		VALUES ($1, $2, $3)
+		RETURNING queued_at`
+
+	// 2. Use '=' instead of ':=' for err because 'err' was already declared on line 27
+	// Fixes: no new variables on left side of :=
+	err = m.DB.QueryRow(query, job.ID, job.ImageID, job.Status).Scan(&job.QueuedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return job, nil
 }
 
 func (m JobModel) Get(id string) (*Job, error) {

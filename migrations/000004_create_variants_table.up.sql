@@ -2,6 +2,8 @@
 
 BEGIN;
 
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";  -- for gen_random_uuid(); uuid-ossp is another option, but pgcrypto is more widely available.
+
 CREATE TABLE IF NOT EXISTS variants (
     id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     image_id        uuid        NOT NULL REFERENCES images(id) ON DELETE CASCADE,

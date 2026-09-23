@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Variant is one generated output (thumbnail, preview, or display) for an
@@ -32,17 +34,29 @@ type VariantModel struct {
 }
 
 func (m VariantModel) Insert(v *Variant) error {
+	// Generate UUID v7 for variant ID
+	variantID, err := uuid.NewV7()
+	if err != nil {
+		return err
+	}
+	v.ID = variantID.String()
+
 	query := `
-		INSERT INTO variants (image_id, name, stored_filename, width, height, size_bytes)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, created_at`
+		INSERT INTO variants (id, image_id, name, stored_filename, width, height, size_bytes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING created_at`
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	args := []any{
+		v.ID,
+		v.ImageID,
+		v.Name,
+		v.StoredFilename,
+		v.Width,
+		v.Height,
+		v.SizeBytes,
+	}
 
-	return m.DB.QueryRowContext(ctx, query,
-		v.ImageID, v.Name, v.StoredFilename, v.Width, v.Height, v.SizeBytes,
-	).Scan(&v.ID, &v.CreatedAt)
+	return m.DB.QueryRow(query, args...).Scan(&v.CreatedAt)
 }
 
 func (m VariantModel) GetByImageAndName(imageID, name string) (*Variant, error) {
