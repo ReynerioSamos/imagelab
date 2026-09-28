@@ -11,9 +11,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     -- Same reasoning as images.id: the job id is handed to the client in
     -- the 202 response and polled at GET /v1/jobs/{job_id}, so it must
     -- not be guessable or enumerable.
-    id            uuid        PRIMARY KEY DEFAULT gen_random_uuid(), -- uuid7 will be set by 
-    image_id      uuid        NOT NULL REFERENCES images(id) ON DELETE CASCADE, -- PG 16 supports uuid4 by default
-    status        job_status  NOT NULL DEFAULT 'queued',
+    id            uuid        PRIMARY KEY DEFAULT gen_random_uuid(), -- overridden with native uuid7()
+    image_id      uuid        NOT NULL REFERENCES images(id) ON DELETE CASCADE,status        
+    job_status  NOT NULL DEFAULT 'queued',
     error_message text,                                  -- WRK-03: client-safe message only, set on failure
     queued_at     timestamptz NOT NULL DEFAULT now(),    -- DATA-01
     started_at    timestamptz,                           -- DATA-02: set when the worker claims the job

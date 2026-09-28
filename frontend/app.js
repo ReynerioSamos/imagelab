@@ -36,6 +36,7 @@ let previewUrl = null;
 let pollTimeoutId = null;
 let pollController = null;
 let activeStatusUrl = null;
+let currentJobId = null;   // tracked so the UI can show which job is being observed
 
 let constraints = {
   acceptedMediaTypes: ["image/jpeg", "image/png"],
@@ -174,15 +175,7 @@ function showSelected(file) {
 
 /* ---------------- Polling & Variant Rendering ---------------- */
 
-/* Helper to format ISO timestamps */
-function formatTimestamp(isoString) {
-  if (!isoString) return "";
-  const date = new Date(isoString);
-  if (isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
-/* 1. Timestamps for Polling Responses */
+/* Timestamps for Polling Responses */
 function updateTimeline(job) {
   const steps = els.timeline.querySelectorAll(".tl-step");
   const status = job.status;
@@ -224,26 +217,28 @@ function updateTimeline(job) {
   }
 }
 
-/* Per-variant Progressive Status Updates */
+/* Per-variant Progressive Status Updates.
+   The variants table has no per-variant status column, so the checklist
+   is derived from the authoritative job state returned by each poll:
+   queued -> pending, processing -> generating, completed -> ready. */
 function updateVariantChecklist(jobVariants = [], jobStatus = "queued") {
   if (!els.checklistItems) return;
 
-  const activeMap = new Map();
-  jobVariants.forEach((v) => {
-    const name = v.name.charAt(0).toUpperCase() + v.name.slice(1);
-    activeMap.set(name, v.status || "completed");
-  });
+  const readyNames = new Set(
+    (jobVariants || []).map((v) => v.name.charAt(0).toUpperCase() + v.name.slice(1))
+  );
 
   const totalExpected = EXPECTED_VARIANTS.length;
-  const completedCount = jobVariants.filter((v) => (v.status || "completed") === "completed").length;
-  const allDone = jobStatus === "completed" || completedCount === totalExpected;
+  const completedCount = jobStatus === "completed" ? totalExpected : readyNames.size;
+  const allDone = jobStatus === "completed"
 
   let html = "";
 
   EXPECTED_VARIANTS.forEach((name) => {
-    // If completed or present in response payload, display status as ready
-    let status = activeMap.get(name) || (jobStatus === "processing" ? "processing" : "pending");
-    if (jobStatus === "completed") status = "completed";
+    let status;
+    if (jobStatus === "completed" || readyNames.has(name)) status = "completed";
+    else if (jobStatus === "processing") status = "processing";
+    else status = "pending";
     const isDone = status === "completed";
 
     html += `
@@ -265,7 +260,7 @@ function updateVariantChecklist(jobVariants = [], jobStatus = "queued") {
           <polyline points="20 6 9 17 4 12"/>
         </svg>
       </span>
-      <span>${allDone ? "All variants completed" : "Processing variants..."}</span>
+      <span>${allDone ? "All variants completed" : `Processing variants... (${completedCount}/${totalExpected})`}</span>
     </li>
   `;
 
@@ -312,60 +307,74 @@ function renderVariants(variants) {
   els.resultsGrid.hidden = false;
 }
 
-/* Progressive Render of Completed Variant Badges in Results Grid */
+/* One short-poll cycle of GET status_url (~1s between requests).
+   Every successful response refreshes badge, timeline, timestamps, and
+   checklist. Results stay hidden until the job reaches "completed". */
 async function pollJobStatus() {
-  if (!activeStatusUrl) return;
+  if (!activeStatusUrl || !pollController) return;
 
   try {
-    const res = await fetch(activeStatusUrl, {
-      signal: pollController ? pollController.signal : undefined,
-    });
+    const res = await fetch(activeStatusUrl, { signal: pollController.signal });
 
     if (!res.ok) throw new Error("Unable to check status");
 
     const data = await res.json();
     const job = data.job;
 
+    // retrieval path healthy again: hide any previeous error message
     if (els.retrievalError) els.retrievalError.hidden = true;
 
+    // Update status badge after every response.
     els.statusBadge.className = `badge badge-${job.status}`;
     els.statusBadge.textContent = job.status.charAt(0).toUpperCase() + job.status.slice(1);
     
-    // Updates UI elements
+    // Update timeline steps + stage timestamps after every response.
     updateTimeline(job);
+    // Update cper-variant checklist after every response.
     updateVariantChecklist(job.variants || [], job.status);
-
-    // Progressively display completed variants as they arrive during polling
-    if (job.variants && job.variants.length > 0) {
-      renderVariants(job.variants);
-    }
 
     if (job.status === "completed") {
       stopPolling();
+      // Terminal success: now display all three variants.
+      renderVariants(job.variants || []);
       showMessage("Job completed successfully!", "success");
     } else if (job.status === "failed") {
       stopPolling();
-      showMessage(`Job failed: ${job.error || "Processing failed."}`, "error");
+      //Terminal failure: keep results hidden, show safe processing error
+      els.resultsEmpty.hidden = false;
+      els.resultsGrid.hidden = true;
+      els.resultsGrid.innerHTML = "";
+      showMessage(`Processing failed: ${job.error || "The server could not process this image."}`, "error");
     } else {
+      // queued or processing: results remain hidden, continue polling every second
       pollTimeoutId = setTimeout(pollJobStatus, 1000);
     }
   } catch (err) {
+    // cancelled observation (new job started or page unloading): do nothing)
     if (err.name === "AbortError") return;
 
+    // Retrieval error: preserve the job and last known state (no DOM rollback)
+    // stop polling, and offer try again via the banner
     stopPolling();
+    if (els.pollingIndicator) els.pollingIndicator.hidden = true;
     if (els.retrievalError) els.retrievalError.hidden = false;
   }
 }
 
-function startPolling(statusUrl) {
+/* Begin observing a job at its status_url. Only ever called AFTER a
+   202 Accepted response provided both job_id and status_url. */
+function startPolling(jobId, statusUrl) {
+  // Abort any in-flight observation of a previous job
   stopPolling();
+
+  currentJobId = jobId;
   activeStatusUrl = statusUrl;
   pollController = new AbortController();
 
   if (els.retrievalError) els.retrievalError.hidden = true;
   if (els.pollingIndicator) els.pollingIndicator.hidden = false;
 
-  // Render initial pending state for checklist
+  // Render initial pending state for checklist; results stay hidden
   updateVariantChecklist([], "queued");
 
   pollJobStatus();
@@ -376,6 +385,11 @@ function startPolling(statusUrl) {
 els.fileInput.addEventListener("change", () => {
   const file = els.fileInput.files[0];
   clearMessage();
+
+  // POLL-08: choosing another image abandons the current observation.
+  // Abort any in-flight status request and stop polling before the UI
+  // is reset for the new selection.
+  stopPolling();
 
   if (!file) {
     resetToInitialState();
@@ -422,11 +436,18 @@ els.processButton.addEventListener("click", async () => {
 
     const result = await response.json();
 
+    // POLL-01: begin polling ONLY after an explicit 202 Accepted that
+    // carries both a job_id and a status_url. Anything else is treated
+    // as a failed acceptance -- no observation starts, no job is claimed.
+    if (response.status !== 202 || !result.job_id || !result.status_url) {
+      throw new Error("The server did not return a valid job acceptance.");
+    }
+
     els.jobIdle.hidden = true;
     els.jobActive.hidden = false;
     els.jobId.textContent = result.job_id;
 
-    startPolling(result.status_url);
+    startPolling(result.job_id,result.status_url);
 
   } catch (err) {
     showMessage(err.message || "Upload failed. Please try again.", "error");
@@ -437,32 +458,28 @@ els.processButton.addEventListener("click", async () => {
   }
 });
 
-// try again reprocess button (for failed jobs) - calls reprocess endpoint with existing job ID
+// POLL-10: "Try again" resumes observation of the SAME status_url.
+// It performs no POST and never calls /reprocess -- the original image
+// is not re-uploaded and no new job is created. The last known badge,
+// timeline, and checklist stay on screen; only the retrieval-error
+// banner is dismissed while the next GET runs.
 if (els.tryAgainButton) {
-  els.tryAgainButton.addEventListener("click", async () => {
-    if (!currentJobId) return;
+  els.tryAgainButton.addEventListener("click", () => {
+    if (!activeStatusUrl || !currentJobId) return;
 
-    try {
-      // Calls reprocess endpoint using existing job ID (JSON payload, no binary upload)
-      const res = await fetch(`/v1/jobs/${currentJobId}/reprocess`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
-      });
+    if (els.retrievalError) els.retrievalError.hidden = true;
+    if (els.pollingIndicator) els.pollingIndicator.hidden = false;
 
-      if (!res.ok) throw new Error("Failed to reprocess job");
-
-      const data = await res.json();
-      
-      // Reset UI state and start polling the NEW job ID
-      startPolling(data.status_url);
-    } catch (err) {
-      showMessage(err.message, "error");
-    }
+    pollController = new AbortController();
+    pollJobStatus();
   });
 }
 
-window.addEventListener("pagehide", () => {
-  stopPolling();
+// POLL-08: cancel observation when the page unloads or hides.
+window.addEventListener("pagehide", stopPolling);
+window.addEventListener("beforeunload", stopPolling);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") stopPolling();
 });
 
 /* ---------------- Init ---------------- */
