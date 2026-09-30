@@ -6,16 +6,16 @@ CMPS 4191 - Advanced Web Technologies - Test 1
 
 Async 202 Accepted + Short Polling
 
-Assessment: Build a synchronous image processing application where an API accpets work, a background worker performs processing on the image and the browser observes the job state.
+Assessment: Build an asynchronous image processing application where an API accpets work, a background worker performs processing on the image and the browser observes the job state.
 
-**Current status: Week 1**
+**Current status: Week 4**
 
 | Check-in | Primary Focus | Expectation | Date | Pass? | Work needed | 
 |----------|---------------|-------------|------|-------|-------------|
 | Week 1   | Contract, setup, schema, upload and original storage   |  Application starts; database and upload foundation work  | 9/9/2026 | Maybe | Make a disclaimer for an accepted image type, Change the UI to look more like the slides, add validation message when user uses bad file type, change ids in DB from bigserial -> UUID |
 | Week 2   | 202 response, durable job, one worker, transformations| At least one image reaches completed end-to-end | 9/16/2026 | Yes | DB- For priamry ids in tables, change to UUID v7 and public IDs as UUID v4, UI - Enlarge the preview image on file upload and move information underneath larger preview AND Keep the preview images for variants consistent |
-| Week 3   | Short Polling, UI states, cancellation, retrieval errors | Browser observes and renders the completed job lifecycle | 9/23/2026 | |  |
-| Week 4   | Integration, failures, measurement, final quality | All acceptance checks pass; final evidence is ready | | |  |
+| Week 3   | Short Polling, UI states, cancellation, retrieval errors | Browser observes and renders the completed job lifecycle | 9/23/2026 | No | look at issues for outstanding |
+| Week 4   | Integration, failures, measurement, final quality | All acceptance checks pass; final evidence is ready | 9/30/2026 | |  |
 
 ---
 
@@ -359,3 +359,35 @@ docker exec -it imagelab_db psql -U imagelab -d imagelab
 ```bash
 SELECT * FROM jobs;
 ```
+
+#### Running Measurements
+1. Navigate to the root dir of the project
+
+2. Give execute permissions to measurement scripts
+```bash
+chmod +x ./measure.image.sh ./measure_burst.sh
+```
+OR
+```bash
+chmod +x measure_*.sh
+```
+3. Run single image E2E test
+```bash
+./measure_image.sh {path/to/image.jpg/png} {tag}
+```
+An example command where the test image is in a folder called test_images and the image is called 9MB.jpg and tagged as a 9MB-test
+```bash
+./measure_image.sh test_images/9MB.jpg 9MB-test
+```
+
+4. Run burst 5 image test
+```bash
+./measure_burst.sh {path/to/image.jpg/png} {iterations} {tag}
+```
+
+An example command using the same image in a folder called test_images and the image is called 9MB.jpg with a 5 iteration burst tagged as 9MB-5-burst-test
+```bash
+./measure_burst.sh test_images/9MB.jpg 5 9MB-5-burst-test
+```
+
+5. Check `measurements.csv` for saved results
