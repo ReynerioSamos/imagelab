@@ -33,8 +33,14 @@ type VariantModel struct {
 	DB *sql.DB
 }
 
-func (m VariantModel) Insert(v *Variant) error {
-	// Generate UUID v7 for variant ID
+// rowQuerier is satisfied by both *sql.DB and *sql.Tx, so a single insert
+// implementation can run standalone (Insert) or as one step inside a
+// caller-managed transaction (InsertTx).
+type rowQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+func (m VariantModel) insert(q rowQuerier, v *Variant) error {
 	variantID, err := uuid.NewV7()
 	if err != nil {
 		return err
@@ -46,17 +52,23 @@ func (m VariantModel) Insert(v *Variant) error {
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING created_at`
 
-	args := []any{
-		v.ID,
-		v.ImageID,
-		v.Name,
-		v.StoredFilename,
-		v.Width,
-		v.Height,
-		v.SizeBytes,
-	}
+	return q.QueryRow(query,
+		v.ID, v.ImageID, v.Name, v.StoredFilename, v.Width, v.Height, v.SizeBytes,
+	).Scan(&v.CreatedAt)
+}
 
-	return m.DB.QueryRow(query, args...).Scan(&v.CreatedAt)
+func (m VariantModel) Insert(v *Variant) error {
+	return m.insert(m.DB, v)
+}
+
+// InsertTx runs the same insert as one statement inside an existing
+// transaction. The worker calls this once per variant against a single
+// *sql.Tx and commits once at the end, so a reader can never observe some
+// of a job's variant rows without the rest -- IMG-03: a job's metadata is
+// "all or complete," not "however many variants happened to finish before
+// something failed."
+func (m VariantModel) InsertTx(tx *sql.Tx, v *Variant) error {
+	return m.insert(tx, v)
 }
 
 func (m VariantModel) GetByImageAndName(imageID, name string) (*Variant, error) {
