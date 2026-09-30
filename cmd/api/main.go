@@ -23,6 +23,10 @@ type config struct {
 	upload struct {
 		maxBytes int64
 	}
+	// new worker delay
+	worker struct {
+		delay time.Duration
+	}
 	db struct {
 		dsn          string
 		maxOpenConns int
@@ -45,6 +49,12 @@ func main() {
 	flag.StringVar(&cfg.env, "env", "development", "Environment (development|staging|production)")
 	flag.StringVar(&cfg.storage.root, "storage-root", "./storage", "Filesystem root for original and variant images")
 	flag.Int64Var(&cfg.upload.maxBytes, "max-upload-bytes", 10<<20, "Maximum accepted upload size in bytes (VAL-01: 10 MB)")
+	// worker delay flag in server start logs
+	flag.DurationVar(&cfg.worker.delay, "worker-delay", 0,
+		"Artificial per-variant processing delay. 0 by default -- set e.g. 1s only "+
+			"when you deliberately want queue wait to be observable, such as the "+
+			"five-image burst measurement in Week 4. Never leave this set for "+
+			"timings meant to reflect real work.")
 
 	flag.StringVar(&cfg.db.dsn, "db-dsn", "", "PostgreSQL DSN")
 	flag.IntVar(&cfg.db.maxOpenConns, "db-max-open-conns", 25, "PostgreSQL max open connections")
@@ -70,7 +80,12 @@ func main() {
 	}
 
 	models := data.NewModels(db)
-	w := worker.New(models, cfg.storage.root, logger)
+	// server logs show worker delay
+	w := worker.New(models, cfg.storage.root, logger, cfg.worker.delay)
+
+	if cfg.worker.delay > 0 {
+		logger.Info("worker artificial delay enabled", "delay", cfg.worker.delay)
+	}
 
 	app := &application{
 		config: cfg,
