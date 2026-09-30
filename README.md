@@ -169,7 +169,7 @@ erDiagram
     IMAGES ||--o{ VARIANTS : "prepares"
 
     IMAGES {
-        bigint id PK
+        uuid id PK
         text original_filename "Metadata only"
         text stored_filename "Server-generated, unique"
         text media_type "Validated"
@@ -178,8 +178,8 @@ erDiagram
     }
 
     JOBS {
-        bigint id PK
-        bigint image_id FK
+        uuid id PK
+        uuid image_id FK
         job_status status "queued|processing|completed|failed"
         timestamptz queued_at
         timestamptz started_at "Nullable (Week 2)"
@@ -188,8 +188,8 @@ erDiagram
     }
 
     VARIANTS {
-        bigint id PK
-        bigint image_id FK
+        uuid id PK
+        uuid image_id FK
         text name "thumbnail|preview|display"
         text stored_filename
         integer width
