@@ -16,3 +16,7 @@
 
 # ZoneIdentifier files (Windows)
 *.Zone.Identifier
+
+# Measurements Recording & test_images folder
+*.csv
+/test_images/*
