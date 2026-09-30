@@ -196,8 +196,9 @@ body {
 
 .preview-thumb {
   width: 100%;
-  max-height: 280px;
-  object-fit: contain; /* Preserves aspect ratio inside container */
+  height: 200px;              /* Explicit height so cover can crop to fit */
+  object-fit: cover;          /* Fills the container box completely */
+  object-position: center;   /* Keeps the focal point centered */
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: #060a14;
@@ -457,8 +458,9 @@ input[type="file"] {
 
 .results-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 1.1rem;
+  align-items: start; /* Prevents cards from stretching each other */
 }
 
 /* Individual Variant Progress Checklist */
@@ -542,25 +544,26 @@ input[type="file"] {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  height: 240px; /* Fixed height for all cards */
 }
 
 .variant-media {
   width: 100%;
-  height: 180px; /* Fixed consistent height container */
+  height: 160px; /* Fixed height for preview frame */
+  flex: none;    /* Prevents flex stretching */
   background: #060a14;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0.5rem;
+  overflow: hidden;
   border-bottom: 1px solid var(--border-soft);
+  padding: 0;   /* Remove padding so object-fit cover fills to the border */
 }
 
 .variant-media img { 
-  max-width: 100%; 
-  max-height: 100%; 
-  object-fit: contain; /* Fits full image inside fixed boundary without stretching or cropping */
+  width: 100%; 
+  height: 100%; 
+  object-fit: cover;
+  object-position: center;
   display: block; 
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 .variant-body {
@@ -569,6 +572,7 @@ input[type="file"] {
   justify-content: space-between;
   gap: 0.6rem;
   padding: 0.75rem 0.85rem;
+  flex: 1; /* Fills remaining card height cleanly */
 }
 
 .variant-name { margin: 0; font-weight: 600; font-size: 0.92rem; }
