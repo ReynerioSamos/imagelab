@@ -192,6 +192,28 @@
     <div id="results-grid" class="results-grid" hidden></div>
   </section>
 
+      <!-- ========== Experimental controls card ========== -->
+    <section class="card" style="margin-top: 1rem; padding: 1.25rem;">
+      <h3 style="font-size: 0.95rem; margin: 0 0 0.75rem; color: var(--accent);">Experimental Workload Controls</h3>
+      <div style="display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.85rem;">
+        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+          <input type="checkbox" id="sim-progress-toggle" /> 
+          <span>Simulated progress (EXP-02)</span>
+        </label>
+        <select id="sim-interval-select" class="btn btn-ghost btn-sm" disabled style="width: 100%;">
+          <option value="Condition_A">Condition A (Quiet Job / 30s delay)</option>
+          <option value="Condition_B" selected>Condition B (Real Progress Baseline)</option>
+          <option value="Condition_C1">Condition C1 (Slow Updates - 2s)</option>
+         <option value="Condition_C2">Condition C2 (Fast Updates - 200ms)</option>
+         <option value="Condition_C3">Condition C3 (Fast Updates + 200ms Latency)</option>
+        </select>
+      </div>
+      <button id="export-csv-btn" class="btn btn-ghost btn-sm" style="margin-top: 1rem; width: 100%;" disabled>
+        Export Run Telemetry (CSV)
+      </button>
+    </section>
+
+
   <footer class="page-foot">
     <p>Reynerio Samos & Chahiim Pop 2026</p>
   </footer>

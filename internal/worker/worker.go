@@ -22,12 +22,14 @@ import (
 )
 
 type Worker struct {
-	models      data.Models
-	storageRoot string
-	logger      *slog.Logger
-	delay       time.Duration // artificial per-variant delay; 0 in normal operation
-	wg          sync.WaitGroup
-	notify 		func(jobID string) // callback to invoke globalHub.NotifyAll after commit
+	models             data.Models
+	storageRoot        string
+	logger             *slog.Logger
+	delay              time.Duration // artificial per-variant delay; 0 in normal operation
+	quietDelay         time.Duration // Condition A quiet delay
+	simulationInterval time.Duration // optional interval for simulated progress updates
+	wg                 sync.WaitGroup
+	notify             func(jobID string) // callback to invoke globalHub.NotifyAll after commit
 }
 
 // New constructs a Worker. delay is applied once per variant while a job
@@ -38,13 +40,15 @@ type Worker struct {
 // pattern -report-delay used in the earlier synchronous/async lab.
 //
 // Test 2 - Updated to accept or set up notification callback
-func New(models data.Models, storageRoot string, logger *slog.Logger, delay time.Duration, notify func(jobID string)) *Worker {
+func New(models data.Models, storageRoot string, logger *slog.Logger, delay time.Duration, quietDelay time.Duration, simulationInterval time.Duration, notify func(jobID string)) *Worker {
 	return &Worker{
-		models:      models,
-		storageRoot: storageRoot,
-		logger:      logger,
-		delay:       delay,
-		notify:      notify,
+		models:             models,
+		storageRoot:        storageRoot,
+		logger:             logger,
+		delay:              delay,
+		quietDelay:         quietDelay,
+		simulationInterval: simulationInterval,
+		notify:             notify,
 	}
 }
 
@@ -134,6 +138,45 @@ func (w *Worker) executeJob(ctx context.Context, job *data.Job) error {
 		return fmt.Errorf("failed to decode image: %w", err)
 	}
 
+	// --- CONDITION A: Quiet Job (30s delay with no intermediate updates) ---
+	if w.quietDelay > 0 {
+		w.logger.Info("applying condition A quiet delay", "duration", w.quietDelay)
+		time.Sleep(w.quietDelay)
+	}
+
+	// --- CONDITION C1 / C2 / C3: Simulated Update Phase ---
+	if w.simulationInterval > 0 {
+		for step := 1; step <= 5; step++ {
+			time.Sleep(w.simulationInterval)
+			tx, err := w.models.DB.BeginTx(ctx, nil)
+			if err != nil {
+				return err
+			}
+			stageMsg := fmt.Sprintf("Simulated progress (step %d/5)", step)
+			newVersion, updateErr := w.models.Jobs.UpdateProgressTx(ctx, tx, job.ID, stageMsg, 0)
+			if updateErr != nil {
+				tx.Rollback()
+				return updateErr
+			}
+			job.Version = newVersion // update job version
+			if err := tx.Commit(); err != nil {
+				return err
+			}
+
+			w.logger.Info("job version committed",
+				"job_id", job.ID,
+				"version", job.Version,
+				"status", job.Status,
+				"stage", stageMsg,
+				"commit_time", time.Now().UTC().Format(time.RFC3339Nano),
+			)
+
+			if w.notify != nil {
+				w.notify(job.ID)
+			}
+		}
+	}
+
 	targets := []struct {
 		name       string
 		maxW       int
@@ -214,17 +257,28 @@ func (w *Worker) executeJob(ctx context.Context, job *data.Job) error {
 		stageMsg := fmt.Sprintf("generated %s variant", target.name)
 
 		// Update progress and bump version atomically
-		if _, err := w.models.Jobs.UpdateProgressTx(ctx, tx, job.ID, stageMsg, completed); err != nil {
+		newVersion, err := w.models.Jobs.UpdateProgressTx(ctx, tx, job.ID, stageMsg, completed)
+		if err != nil {
 			tx.Rollback()
 			_ = os.Remove(outPath)
 			return fmt.Errorf("failed to update job progress: %w", err)
 		}
+		job.Version = newVersion
 
 		// Commit transaction
 		if err := tx.Commit(); err != nil {
 			_ = os.Remove(outPath)
 			return fmt.Errorf("failed to commit variant transaction: %w", err)
 		}
+
+		// Structured Commit Log
+		w.logger.Info("job version committed",
+			"job_id", job.ID,
+			"version", job.Version,
+			"status", job.Status,
+			"stage", stageMsg,
+			"commit_time", time.Now().UTC().Format(time.RFC3339Nano),
+		)
 
 		// Notify observers AFTER commit
 		if w.notify != nil {
@@ -238,14 +292,25 @@ func (w *Worker) executeJob(ctx context.Context, job *data.Job) error {
 		return fmt.Errorf("failed to start completion transaction: %w", err)
 	}
 
-	if _, err := w.models.Jobs.MarkCompletedTx(ctx, tx, job.ID, completed); err != nil {
+	newVersion, err := w.models.Jobs.MarkCompletedTx(ctx, tx, job.ID, completed)
+	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to mark job completed: %w", err)
 	}
+	job.Version = newVersion
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit completion transaction: %w", err)
 	}
+
+	// Structured Commit Log for completion
+	w.logger.Info("job version committed",
+		"job_id", job.ID,
+		"version", job.Version,
+		"status", job.Status,
+		"stage", "job completed",
+		"commit_time", time.Now().UTC().Format(time.RFC3339Nano),
+	)
 
 	// Final notification
 	if w.notify != nil {
