@@ -1,42 +1,46 @@
-// app.js - Full implementation with dynamic per-variant status checklist
+// app.js - Version 2 Long & Short Polling Observation Loop
 
 const els = {
-  fileInput:        document.getElementById("file-input"),
-  dropzoneEmpty:    document.getElementById("dropzone-empty"),
-  dropzoneSelected: document.getElementById("dropzone-selected"),
-  previewImg:       document.getElementById("preview-img"),
-  metaFilename:     document.getElementById("meta-filename"),
-  metaLine:         document.getElementById("meta-line"),
-  constraintsNote:  document.getElementById("constraints-note"),
-  processButton:    document.getElementById("process-button"),
-  processLabel:     document.getElementById("process-button-label"),
-  uploadMessage:    document.getElementById("upload-message"),
+  fileInput:          document.getElementById("file-input"),
+  dropzoneEmpty:      document.getElementById("dropzone-empty"),
+  dropzoneSelected:   document.getElementById("dropzone-selected"),
+  previewImg:         document.getElementById("preview-img"),
+  metaFilename:       document.getElementById("meta-filename"),
+  metaLine:           document.getElementById("meta-line"),
+  constraintsNote:    document.getElementById("constraints-note"),
+  processButton:      document.getElementById("process-button"),
+  processLabel:       document.getElementById("process-button-label"),
+  uploadMessage:      document.getElementById("upload-message"),
 
-  // Job & Polling elements
-  jobIdle:          document.getElementById("job-idle"),
-  jobActive:        document.getElementById("job-active"),
-  jobId:            document.getElementById("job-id"),
-  statusBadge:      document.getElementById("status-badge"),
-  timeline:         document.getElementById("timeline"),
-  checklistItems:   document.getElementById("checklist-items"),
-  pollingIndicator: document.getElementById("polling-indicator"),
-  retrievalError:   document.getElementById("retrieval-error"),
-  tryAgainButton:   document.getElementById("try-again-button"),
+  jobIdle:            document.getElementById("job-idle"),
+  jobActive:          document.getElementById("job-active"),
+  jobId:              document.getElementById("job-id"),
+  jobVersion:         document.getElementById("job-version"),
+  pollCount:          document.getElementById("poll-count"),
+  statusBadge:        document.getElementById("status-badge"),
+  pollMode:           document.getElementById("poll-mode"),
+  timeline:           document.getElementById("timeline"),
+  checklistItems:     document.getElementById("checklist-items"),
+  pollingIndicator:   document.getElementById("polling-indicator"),
+  pollingModeLabel:   document.getElementById("polling-mode-label"),
+  retrievalError:     document.getElementById("retrieval-error"),
+  tryAgainButton:     document.getElementById("try-again-button"),
 
-  // Results elements
-  resultsEmpty:     document.getElementById("results-empty"),
-  resultsGrid:      document.getElementById("results-grid"),
+  resultsEmpty:       document.getElementById("results-empty"),
+  resultsGrid:        document.getElementById("results-grid"),
 };
 
 let selectedFile = null;
 let isSubmitting = false;
 let previewUrl = null;
 
-// Polling and Abort state
-let pollTimeoutId = null;
+let currentJobId = null;
+let currentStatusUrl = null;
+let currentVersion = 0;
+let totalPollRequests = 0;
 let pollController = null;
-let activeStatusUrl = null;
-let currentJobId = null;   // tracked so the UI can show which job is being observed
+let observationToken = 0;
+let isPolling = false;
 
 let constraints = {
   acceptedMediaTypes: ["image/jpeg", "image/png"],
@@ -45,8 +49,6 @@ let constraints = {
 };
 
 const EXPECTED_VARIANTS = ["Thumbnail", "Preview", "Display"];
-
-/* ---------------- Helpers ---------------- */
 
 function formatBytes(bytes) {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -99,13 +101,9 @@ function formatTimestamp(isoString) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-/* ---------------- State Reset ---------------- */
-
 function stopPolling() {
-  if (pollTimeoutId !== null) {
-    clearTimeout(pollTimeoutId);
-    pollTimeoutId = null;
-  }
+  isPolling = false;
+  observationToken++;
   if (pollController) {
     pollController.abort();
     pollController = null;
@@ -116,7 +114,11 @@ function stopPolling() {
 function resetToInitialState() {
   stopPolling();
   selectedFile = null;
-  activeStatusUrl = null;
+  currentJobId = null;
+  currentStatusUrl = null;
+  currentVersion = 0;
+  totalPollRequests = 0;
+  if (els.pollCount) els.pollCount.textContent = "0";
   els.fileInput.value = "";
 
   if (previewUrl) {
@@ -144,7 +146,6 @@ function resetToInitialState() {
   if (els.checklistItems) els.checklistItems.innerHTML = "";
   if (els.retrievalError) els.retrievalError.hidden = true;
 
-  // Clear timeline timestamps
   if (els.timeline) {
     els.timeline.querySelectorAll(".tl-time").forEach((span) => {
       span.textContent = "";
@@ -173,9 +174,29 @@ function showSelected(file) {
   els.processButton.disabled = false;
 }
 
-/* ---------------- Polling & Variant Rendering ---------------- */
+function renderJobState(job) {
+  currentVersion = job.version;
 
-/* Timestamps for Polling Responses */
+  if (els.jobVersion) els.jobVersion.textContent = `v${job.version}`;
+  if (els.statusBadge) {
+    els.statusBadge.className = `badge badge-${job.status}`;
+    els.statusBadge.textContent = job.status.charAt(0).toUpperCase() + job.status.slice(1);
+  }
+
+  updateTimeline(job);
+  updateVariantChecklist(job.variants || [], job.status);
+
+  if (job.status === "completed") {
+    renderVariants(job.variants || []);
+    showMessage("Job completed successfully!", "success");
+  } else if (job.status === "failed") {
+    els.resultsEmpty.hidden = false;
+    els.resultsGrid.hidden = true;
+    els.resultsGrid.innerHTML = "";
+    showMessage(`Processing failed: ${job.error || "Server error"}`, "error");
+  }
+}
+
 function updateTimeline(job) {
   const steps = els.timeline.querySelectorAll(".tl-step");
   const status = job.status;
@@ -196,7 +217,6 @@ function updateTimeline(job) {
     }
   });
 
-  // Populate stage timestamps from polling response payload
   const timeAccepted = document.getElementById("tl-time-accepted");
   const timeStored = document.getElementById("tl-time-stored");
   const timeGenerating = document.getElementById("tl-time-generating");
@@ -217,10 +237,6 @@ function updateTimeline(job) {
   }
 }
 
-/* Per-variant Progressive Status Updates.
-   The variants table has no per-variant status column, so the checklist
-   is derived from the authoritative job state returned by each poll:
-   queued -> pending, processing -> generating, completed -> ready. */
 function updateVariantChecklist(jobVariants = [], jobStatus = "queued") {
   if (!els.checklistItems) return;
 
@@ -230,7 +246,7 @@ function updateVariantChecklist(jobVariants = [], jobStatus = "queued") {
 
   const totalExpected = EXPECTED_VARIANTS.length;
   const completedCount = jobStatus === "completed" ? totalExpected : readyNames.size;
-  const allDone = jobStatus === "completed"
+  const allDone = jobStatus === "completed";
 
   let html = "";
 
@@ -307,88 +323,89 @@ function renderVariants(variants) {
   els.resultsGrid.hidden = false;
 }
 
-/* One short-poll cycle of GET status_url (~1s between requests).
-   Every successful response refreshes badge, timeline, timestamps, and
-   checklist. Results stay hidden until the job reaches "completed". */
-async function pollJobStatus() {
-  if (!activeStatusUrl || !pollController) return;
-
-  try {
-    const res = await fetch(activeStatusUrl, { signal: pollController.signal });
-
-    if (!res.ok) throw new Error("Unable to check status");
-
-    const data = await res.json();
-    const job = data.job;
-
-    // retrieval path healthy again: hide any previeous error message
-    if (els.retrievalError) els.retrievalError.hidden = true;
-
-    // Update status badge after every response.
-    els.statusBadge.className = `badge badge-${job.status}`;
-    els.statusBadge.textContent = job.status.charAt(0).toUpperCase() + job.status.slice(1);
-    
-    // Update timeline steps + stage timestamps after every response.
-    updateTimeline(job);
-    // Update cper-variant checklist after every response.
-    updateVariantChecklist(job.variants || [], job.status);
-
-    if (job.status === "completed") {
-      stopPolling();
-      // Terminal success: now display all three variants.
-      renderVariants(job.variants || []);
-      showMessage("Job completed successfully!", "success");
-    } else if (job.status === "failed") {
-      stopPolling();
-      //Terminal failure: keep results hidden, show safe processing error
-      els.resultsEmpty.hidden = false;
-      els.resultsGrid.hidden = true;
-      els.resultsGrid.innerHTML = "";
-      showMessage(`Processing failed: ${job.error || "The server could not process this image."}`, "error");
-    } else {
-      // queued or processing: results remain hidden, continue polling every second
-      pollTimeoutId = setTimeout(pollJobStatus, 1000);
-    }
-  } catch (err) {
-    // cancelled observation (new job started or page unloading): do nothing)
-    if (err.name === "AbortError") return;
-
-    // Retrieval error: preserve the job and last known state (no DOM rollback)
-    // stop polling, and offer try again via the banner
-    stopPolling();
-    if (els.pollingIndicator) els.pollingIndicator.hidden = true;
-    if (els.retrievalError) els.retrievalError.hidden = false;
-  }
-}
-
-/* Begin observing a job at its status_url. Only ever called AFTER a
-   202 Accepted response provided both job_id and status_url. */
-function startPolling(jobId, statusUrl) {
-  // Abort any in-flight observation of a previous job
+async function startObservation(jobId, statusUrl) {
   stopPolling();
 
   currentJobId = jobId;
-  activeStatusUrl = statusUrl;
-  pollController = new AbortController();
+  currentStatusUrl = statusUrl;
+  isPolling = true;
+  const token = observationToken;
 
   if (els.retrievalError) els.retrievalError.hidden = true;
   if (els.pollingIndicator) els.pollingIndicator.hidden = false;
 
-  // Render initial pending state for checklist; results stay hidden
   updateVariantChecklist([], "queued");
 
-  pollJobStatus();
-}
+  const mode = els.pollMode ? els.pollMode.value : "long";
+  if (els.pollingModeLabel) {
+    els.pollingModeLabel.textContent = mode === "long" ? "long-polling loop" : "short-polling interval (1s)";
+  }
 
-/* ---------------- Event Listeners ---------------- */
+  while (isPolling && token === observationToken) {
+    pollController = new AbortController();
+    const timeoutId = setTimeout(() => pollController.abort(), 30000);
+
+    try {
+      let url = statusUrl;
+      
+      // Long polling uses ?after & wait parameters. Short polling requests plain status every second.
+      if (mode === "long" && currentVersion > 0) {
+        url += `?after=${currentVersion}&wait=20`;
+      }
+
+      totalPollRequests++;
+      if (els.pollCount) els.pollCount.textContent = totalPollRequests;
+
+      const response = await fetch(url, {
+        signal: pollController.signal,
+        headers: { "Cache-Control": "no-store" }
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.status === 204) {
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      const data = await response.json();
+      const job = data.job;
+
+      renderJobState(job);
+
+      if (job.status === "completed" || job.status === "failed") {
+        isPolling = false;
+        if (els.pollingIndicator) els.pollingIndicator.hidden = true;
+        break;
+      }
+
+      // Short polling enforces a fixed 1-second delay between requests regardless of version changes
+      if (mode === "short") {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+    } catch (err) {
+      clearTimeout(timeoutId);
+
+      if (err.name === "AbortError") {
+        if (token !== observationToken) break;
+        continue;
+      }
+
+      isPolling = false;
+      if (els.pollingIndicator) els.pollingIndicator.hidden = true;
+      if (els.retrievalError) els.retrievalError.hidden = false;
+      break;
+    }
+  }
+}
 
 els.fileInput.addEventListener("change", () => {
   const file = els.fileInput.files[0];
   clearMessage();
-
-  // POLL-08: choosing another image abandons the current observation.
-  // Abort any in-flight status request and stop polling before the UI
-  // is reset for the new selection.
   stopPolling();
 
   if (!file) {
@@ -404,7 +421,7 @@ els.fileInput.addEventListener("change", () => {
 
   if (file.size > constraints.maxBytes) {
     resetToInitialState();
-    showMessage(`"${file.name}" is ${formatBytes(file.size)}, which is over the ${formatBytes(constraints.maxBytes)} limit.`, "error");
+    showMessage(`"${file.name}" exceeds the limit.`, "error");
     return;
   }
 
@@ -435,10 +452,6 @@ els.processButton.addEventListener("click", async () => {
     }
 
     const result = await response.json();
-
-    // POLL-01: begin polling ONLY after an explicit 202 Accepted that
-    // carries both a job_id and a status_url. Anything else is treated
-    // as a failed acceptance -- no observation starts, no job is claimed.
     if (response.status !== 202 || !result.job_id || !result.status_url) {
       throw new Error("The server did not return a valid job acceptance.");
     }
@@ -446,8 +459,11 @@ els.processButton.addEventListener("click", async () => {
     els.jobIdle.hidden = true;
     els.jobActive.hidden = false;
     els.jobId.textContent = result.job_id;
+    currentVersion = 0;
+    totalPollRequests = 0;
+    if (els.pollCount) els.pollCount.textContent = "0";
 
-    startPolling(result.job_id,result.status_url);
+    startObservation(result.job_id, result.status_url);
 
   } catch (err) {
     showMessage(err.message || "Upload failed. Please try again.", "error");
@@ -458,31 +474,27 @@ els.processButton.addEventListener("click", async () => {
   }
 });
 
-// POLL-10: "Try again" resumes observation of the SAME status_url.
-// It performs no POST and never calls /reprocess -- the original image
-// is not re-uploaded and no new job is created. The last known badge,
-// timeline, and checklist stay on screen; only the retrieval-error
-// banner is dismissed while the next GET runs.
 if (els.tryAgainButton) {
   els.tryAgainButton.addEventListener("click", () => {
-    if (!activeStatusUrl || !currentJobId) return;
-
+    if (!currentStatusUrl || !currentJobId) return;
     if (els.retrievalError) els.retrievalError.hidden = true;
-    if (els.pollingIndicator) els.pollingIndicator.hidden = false;
-
-    pollController = new AbortController();
-    pollJobStatus();
+    startObservation(currentJobId, currentStatusUrl);
   });
 }
 
-// POLL-08: cancel observation when the page unloads or hides.
+if (els.pollMode) {
+  els.pollMode.addEventListener("change", () => {
+    if (currentStatusUrl && currentJobId && isPolling) {
+      startObservation(currentJobId, currentStatusUrl);
+    }
+  });
+}
+
 window.addEventListener("pagehide", stopPolling);
 window.addEventListener("beforeunload", stopPolling);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") stopPolling();
 });
-
-/* ---------------- Init ---------------- */
 
 resetToInitialState();
 renderConstraintsNote();

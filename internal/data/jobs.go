@@ -165,3 +165,56 @@ func (m JobModel) MarkFailed(jobID string, errMsg string) error {
 	_, err := m.DB.ExecContext(ctx, query, errMsg, jobID)
 	return err
 }
+
+// Test 2 Implementation of UpdateProgressTx, MarkCompletedTx, and MarkFailedTx methods for long polling implementation to work alongside the old Test 1 - Short polling
+// These are transactional methods to ensure that the job state is updated consistently and that any observers waiting for changes are notified after the transaction commits.
+
+
+// UpdateProgressTx updates the job stage, increments variants_completed, and bumps version atomically within a transaction.
+func (m JobModel) UpdateProgressTx(ctx context.Context, tx *sql.Tx, jobID string, stage string, variantsCompleted int) (int, error) {
+	query := `
+		UPDATE jobs
+		SET stage = $1, 
+		    variants_completed = $2, 
+		    version = version + 1
+		WHERE id = $3
+		RETURNING version`
+
+	var newVersion int
+	err := tx.QueryRowContext(ctx, query, stage, variantsCompleted, jobID).Scan(&newVersion)
+	return newVersion, err
+}
+
+// MarkCompletedTx transitions the job to completed, updates stage/variants, and bumps version atomically within a transaction.
+func (m JobModel) MarkCompletedTx(ctx context.Context, tx *sql.Tx, jobID string, variantsCompleted int) (int, error) {
+	query := `
+		UPDATE jobs
+		SET status = 'completed', 
+		    stage = 'completed', 
+		    variants_completed = $1, 
+		    version = version + 1, 
+		    completed_at = NOW()
+		WHERE id = $2
+		RETURNING version`
+
+	var newVersion int
+	err := tx.QueryRowContext(ctx, query, variantsCompleted, jobID).Scan(&newVersion)
+	return newVersion, err
+}
+
+// MarkFailedTx transitions the job to failed, records error message, and bumps version atomically within a transaction.
+func (m JobModel) MarkFailedTx(ctx context.Context, tx *sql.Tx, jobID string, errMsg string) (int, error) {
+	query := `
+		UPDATE jobs
+		SET status = 'failed', 
+		    stage = 'failed', 
+		    error_message = $1, 
+		    version = version + 1, 
+		    failed_at = NOW()
+		WHERE id = $2
+		RETURNING version`
+
+	var newVersion int
+	err := tx.QueryRowContext(ctx, query, errMsg, jobID).Scan(&newVersion)
+	return newVersion, err
+}

@@ -36,7 +36,6 @@
         <h2 id="upload-heading">Upload image</h2>
       </div>
 
-      <!-- Empty state: UI-01 -->
       <div id="dropzone" class="dropzone">
         <div id="dropzone-empty" class="dropzone-empty">
           <span class="dz-icon" aria-hidden="true">
@@ -47,16 +46,12 @@
           </span>
           <p class="dz-title">No image selected</p>
           <label for="file-input" class="btn btn-ghost">Choose image</label>
-          <!-- Accepted-type disclaimer, populated from GET /v1/upload-constraints -->
           <p id="constraints-note" class="dz-note">JPEG or PNG &middot; up to 10 MB</p>
         </div>
 
-        <!-- Selected state: UI-05 -->
         <div id="dropzone-selected" class="dropzone-selected" hidden>
-          <!-- Full-width preview image on top -->
           <img id="preview-img" class="preview-thumb" alt="Preview of the selected image" />
           
-          <!-- File info and actions underneath -->
           <div class="selected-meta">
             <div class="selected-info">
               <p id="meta-filename" class="selected-name"></p>
@@ -73,6 +68,7 @@
             </label>
           </div>
         </div>
+      </div>
 
       <input type="file" id="file-input" accept="image/jpeg,image/png" />
 
@@ -85,7 +81,6 @@
         <span id="process-button-label">Process image</span>
       </button>
 
-      <!-- Validation / error messages land here -->
       <p id="upload-message" class="form-message" role="status" aria-live="polite" hidden></p>
     </section>
 
@@ -95,70 +90,84 @@
         <span class="card-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>
+            <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l-.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>
           </svg>
         </span>
         <h2 id="job-heading">Processing job</h2>
-        <span id="status-badge" class="badge badge-idle">No job</span>
+
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 0.5rem;">
+          <label for="poll-mode" style="font-size: 0.78rem; color: var(--text-faint);">Mode:</label>
+          <select id="poll-mode" class="btn btn-ghost btn-sm" style="padding: 0.25rem 0.5rem; font-size: 0.78rem;">
+            <option value="long">Long Polling</option>
+            <option value="short">Short Polling</option>
+          </select>
+          <span id="status-badge" class="badge badge-idle">No job</span>
+        </div>
       </div>
 
-      <!-- UI-03: idle until a job exists -->
       <div id="job-idle" class="job-idle">
         <p class="muted">No active job</p>
         <p class="muted-sm">Submit an image to create a processing job.</p>
       </div>
 
-      <!-- Becomes live in Week 2 (job id) and Week 3 (timeline + polling) -->
       <div id="job-active" hidden>
-        <p class="job-id-label">Job ID</p>
-        <p id="job-id" class="job-id"></p>
+        <!-- Clean, compact metrics row for Job ID, Polls, and Version -->
+        <div style="display: grid; grid-template-columns: 1fr auto auto; gap: 1rem; align-items: baseline; background: rgba(255,255,255,0.02); padding: 0.75rem 0.9rem; border-radius: var(--radius-sm); border: 1px solid var(--border-soft); margin-bottom: 1rem;">
+          <div>
+            <p class="job-id-label" style="margin: 0;">Job ID</p>
+            <p id="job-id" class="job-id" style="margin: 0.1rem 0 0; font-size: 0.9rem;"></p>
+          </div>
+          <div style="text-align: right; padding-left: 0.75rem; border-left: 1px solid var(--border);">
+            <p class="job-id-label" style="margin: 0;">Polls</p>
+            <p id="poll-count" class="job-id" style="margin: 0.1rem 0 0; font-size: 0.95rem; color: var(--accent);">0</p>
+          </div>
+          <div style="text-align: right; padding-left: 0.75rem; border-left: 1px solid var(--border);">
+            <p class="job-id-label" style="margin: 0;">Version</p>
+            <p id="job-version" class="job-id" style="margin: 0.1rem 0 0; font-size: 0.95rem;">v0</p>
+          </div>
+        </div>
 
         <ol class="timeline" id="timeline">
-  <li class="tl-step" data-step="accepted">
-    <span class="tl-marker"></span>
-    <span class="tl-body">
-      <span class="tl-title">Upload accepted</span>
-      <span class="tl-time" id="tl-time-accepted"></span>
-    </span>
-  </li>
-  <li class="tl-step" data-step="stored">
-    <span class="tl-marker"></span>
-    <span class="tl-body">
-      <span class="tl-title">Original stored</span>
-      <span class="tl-time" id="tl-time-stored"></span>
-    </span>
-  </li>
-  <li class="tl-step" data-step="generating">
-    <span class="tl-marker"></span>
-    <span class="tl-body">
-      <span class="tl-title">Generating variants</span>
-      <span class="tl-time" id="tl-time-generating"></span>
-    </span>
-  </li>
-  <li class="tl-step" data-step="complete">
-    <span class="tl-marker"></span>
-    <span class="tl-body">
-      <span class="tl-title">Complete</span>
-      <span class="tl-time" id="tl-time-complete">Pending</span>
-    </span>
-  </li>
-</ol>
+          <li class="tl-step" data-step="accepted">
+            <span class="tl-marker"></span>
+            <span class="tl-body">
+              <span class="tl-title">Upload accepted</span>
+              <span class="tl-time" id="tl-time-accepted"></span>
+            </span>
+          </li>
+          <li class="tl-step" data-step="stored">
+            <span class="tl-marker"></span>
+            <span class="tl-body">
+              <span class="tl-title">Original stored</span>
+              <span class="tl-time" id="tl-time-stored"></span>
+            </span>
+          </li>
+          <li class="tl-step" data-step="generating">
+            <span class="tl-marker"></span>
+            <span class="tl-body">
+              <span class="tl-title">Generating variants</span>
+              <span class="tl-time" id="tl-time-generating"></span>
+            </span>
+          </li>
+          <li class="tl-step" data-step="complete">
+            <span class="tl-marker"></span>
+            <span class="tl-body">
+              <span class="tl-title">Complete</span>
+              <span class="tl-time" id="tl-time-complete">Pending</span>
+            </span>
+          </li>
+        </ol>
 
-        <!-- Live status checklist for individual variants -->
-<div id="variant-checklist" class="variant-checklist">
-  <p class="checklist-title">Variant Progress</p>
-  <ul id="checklist-items" class="checklist-items">
-    <!-- Populated dynamically via JS -->
-  </ul>
-</div>
+        <div id="variant-checklist" class="variant-checklist">
+          <p class="checklist-title">Variant Progress</p>
+          <ul id="checklist-items" class="checklist-items"></ul>
+        </div>
 
-        <!-- UI-12: shown while queued/processing once polling exists -->
         <p id="polling-indicator" class="polling-indicator" hidden>
           <span class="spinner" aria-hidden="true"></span>
-          Checking status automatically &middot; <span class="nowrap">every 1 second</span>
+          Checking status automatically &middot; <span class="nowrap" id="polling-mode-label">active observation loop</span>
         </p>
 
-        <!-- POLL-09: retrieval-error recovery, wired up in Week 3 -->
         <div id="retrieval-error" class="retrieval-error" hidden>
           <p class="retrieval-text">Unable to check status. The job may still be running.</p>
           <button id="try-again-button" class="btn btn-ghost btn-sm" type="button">Try again</button>
@@ -168,7 +177,6 @@
 
   </div>
 
-  <!-- ========== Results ========== -->
   <section class="card results-card" aria-labelledby="results-heading">
     <div class="card-head">
       <span class="card-icon" aria-hidden="true">
@@ -180,9 +188,7 @@
       <h2 id="results-heading">Generated images</h2>
     </div>
 
-    <!-- UI-04 -->
     <p id="results-empty" class="muted">No images generated yet</p>
-    <!-- UI-14/UI-15: filled only after the job reports completed -->
     <div id="results-grid" class="results-grid" hidden></div>
   </section>
 
