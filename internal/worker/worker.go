@@ -27,6 +27,7 @@ type Worker struct {
 	logger      *slog.Logger
 	delay       time.Duration // artificial per-variant delay; 0 in normal operation
 	wg          sync.WaitGroup
+	notify 		func(jobID string) // callback to invoke globalHub.NotifyAll after commit
 }
 
 // New constructs a Worker. delay is applied once per variant while a job
@@ -35,12 +36,15 @@ type Worker struct {
 // must be 0 for any timing meant to reflect real work, and is wired to
 // -worker-delay in cmd/api/main.go rather than hardcoded -- the same
 // pattern -report-delay used in the earlier synchronous/async lab.
-func New(models data.Models, storageRoot string, logger *slog.Logger, delay time.Duration) *Worker {
+//
+// Test 2 - Updated to accept or set up notification callback
+func New(models data.Models, storageRoot string, logger *slog.Logger, delay time.Duration, notify func(jobID string)) *Worker {
 	return &Worker{
 		models:      models,
 		storageRoot: storageRoot,
 		logger:      logger,
 		delay:       delay,
+		notify:      notify,
 	}
 }
 
@@ -81,25 +85,24 @@ func (w *Worker) processNextJob(ctx context.Context) {
 
 	if err := w.executeJob(ctx, job); err != nil {
 		if errors.Is(err, context.Canceled) {
-			// Shutdown interrupted this job mid-processing -- it was
-			// never actually a failure, so it is left in 'processing'
-			// rather than marked failed. Recovering a job left
-			// mid-processing after a restart is out of scope for
-			// Version 1 (see the Requirements spec's Limitations
-			// section: worker-crash recovery).
 			w.logger.Info("job processing interrupted by shutdown", "job_id", job.ID)
 			return
 		}
 		w.logger.Error("job processing failed", "job_id", job.ID, "error", err)
-		_ = w.models.Jobs.MarkFailed(job.ID, "processing failed due to server image transform error")
+		
+		// Mark failed in a transaction with version bump
+		tx, txErr := w.models.DB.BeginTx(ctx, nil)
+		if txErr == nil {
+			_, _ = w.models.Jobs.MarkFailedTx(ctx, tx, job.ID, "processing failed due to server image transform error")
+			_ = tx.Commit()
+			if w.notify != nil {
+				w.notify(job.ID)
+			}
+		}
 		return
 	}
 
-	if err := w.models.Jobs.MarkCompleted(job.ID); err != nil {
-		w.logger.Error("failed to mark job completed", "job_id", job.ID, "error", err)
-	} else {
-		w.logger.Info("job completed successfully", "job_id", job.ID)
-	}
+	w.logger.Info("job completed successfully", "job_id", job.ID)
 }
 
 // builtVariant is a fully generated and encoded variant that has not yet
@@ -142,15 +145,13 @@ func (w *Worker) executeJob(ctx context.Context, job *data.Job) error {
 		{name: "display", maxW: 1200, maxH: 900, cropSquare: false},
 	}
 
-	// Phase 1: generate and encode every variant in memory. No file or
-	// database write happens until all three of these succeed.
-	built := make([]builtVariant, 0, len(targets))
+	variantDir := filepath.Join(w.storageRoot, "variants")
+	if err := os.MkdirAll(variantDir, 0755); err != nil {
+		return fmt.Errorf("failed to create variants directory: %w", err)
+	}
+
+	completed := 0
 	for _, target := range targets {
-		// Artificial per-variant delay (0 by default; see -worker-delay).
-		// Waiting on ctx.Done() alongside the timer means a shutdown
-		// signal interrupts the wait immediately instead of blocking it
-		// out to completion -- the same select{} pattern used for the
-		// simulated report delay in the earlier async lab.
 		if w.delay > 0 {
 			timer := time.NewTimer(w.delay)
 			select {
@@ -181,70 +182,76 @@ func (w *Worker) executeJob(ctx context.Context, job *data.Job) error {
 			return err
 		}
 
-		built = append(built, builtVariant{
-			name:           target.name,
-			storedFilename: outFilename,
-			bytes:          encoded,
-			width:          width,
-			height:         height,
-		})
-	}
-
-	// Phase 2: all three succeeded in memory -- now persist. Files are
-	// written first, tracking what has been written so a failure partway
-	// through can be cleaned up; then all three metadata rows are
-	// inserted in a single transaction so the database side is atomic
-	// too (either all three rows exist, or none do).
-	variantDir := filepath.Join(w.storageRoot, "variants")
-	if err := os.MkdirAll(variantDir, 0755); err != nil {
-		return fmt.Errorf("failed to create variants directory: %w", err)
-	}
-
-	var written []string
-	cleanup := func() {
-		for _, p := range written {
-			_ = os.Remove(p)
-		}
-	}
-
-	for _, b := range built {
-		outPath := filepath.Join(variantDir, b.storedFilename)
-		if err := os.WriteFile(outPath, b.bytes, 0o644); err != nil {
-			cleanup()
+		// Write file to disk immediately
+		outPath := filepath.Join(variantDir, outFilename)
+		if err := os.WriteFile(outPath, encoded, 0o644); err != nil {
 			return fmt.Errorf("failed to write variant file: %w", err)
 		}
-		written = append(written, outPath)
-	}
 
-	tx, err := w.models.DB.BeginTx(ctx, nil)
-	if err != nil {
-		cleanup()
-		return fmt.Errorf("failed to start variant metadata transaction: %w", err)
-	}
-	defer tx.Rollback()
+		// Begin transaction for this variant milestone
+		tx, err := w.models.DB.BeginTx(ctx, nil)
+		if err != nil {
+			_ = os.Remove(outPath)
+			return fmt.Errorf("failed to start transaction: %w", err)
+		}
 
-	for _, b := range built {
 		variant := &data.Variant{
 			ImageID:        job.ImageID,
-			Name:           b.name,
-			StoredFilename: b.storedFilename,
-			Width:          b.width,
-			Height:         b.height,
-			SizeBytes:      int64(len(b.bytes)),
+			Name:           target.name,
+			StoredFilename: outFilename,
+			Width:          width,
+			Height:         height,
+			SizeBytes:      int64(len(encoded)),
 		}
+
 		if err := w.models.Variants.InsertTx(tx, variant); err != nil {
-			cleanup()
+			tx.Rollback()
+			_ = os.Remove(outPath)
 			return fmt.Errorf("failed to insert variant record: %w", err)
 		}
+
+		completed++
+		stageMsg := fmt.Sprintf("generated %s variant", target.name)
+
+		// Update progress and bump version atomically
+		if _, err := w.models.Jobs.UpdateProgressTx(ctx, tx, job.ID, stageMsg, completed); err != nil {
+			tx.Rollback()
+			_ = os.Remove(outPath)
+			return fmt.Errorf("failed to update job progress: %w", err)
+		}
+
+		// Commit transaction
+		if err := tx.Commit(); err != nil {
+			_ = os.Remove(outPath)
+			return fmt.Errorf("failed to commit variant transaction: %w", err)
+		}
+
+		// Notify observers AFTER commit
+		if w.notify != nil {
+			w.notify(job.ID)
+		}
+	}
+
+	// Final completion transaction (can share or follow the last milestone)
+	tx, err := w.models.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to start completion transaction: %w", err)
+	}
+
+	if _, err := w.models.Jobs.MarkCompletedTx(ctx, tx, job.ID, completed); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to mark job completed: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		cleanup()
-		return fmt.Errorf("failed to commit variant metadata: %w", err)
+		return fmt.Errorf("failed to commit completion transaction: %w", err)
 	}
 
-	// IMG-03: only now, with every variant file written and every row
-	// committed together, does the caller mark the job completed.
+	// Final notification
+	if w.notify != nil {
+		w.notify(job.ID)
+	}
+
 	return nil
 }
 

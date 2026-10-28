@@ -205,9 +205,6 @@ func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// API-01: GET /v1/jobs/{id} without query parameters is a prompt snapshot response (never wait)
-	isPromptRequest := !hasAfter
-
 	fetchJob := func() (*data.Job, error) {
 		return app.models.Jobs.Get(jobID)
 	}
@@ -222,28 +219,46 @@ func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Classify poll type for clear server logging
+	pollMode := "short-poll (snapshot)"
+	if hasAfter {
+		if hasWait {
+			pollMode = "long-poll"
+		} else {
+			pollMode = "short-poll (interval)"
+		}
+	}
+
+	app.logger.Info("job status poll received",
+		"job_id", jobID,
+		"poll_mode", pollMode,
+		"client_version", afterVal,
+		"server_version", job.Version,
+	)
+
 	// Set Cache-Control header (API-03)
 	w.Header().Set("Cache-Control", "no-store")
 
 	isTerminal := job.Status == "completed" || job.Status == "failed"
+	isPromptRequest := !hasAfter
 
-	// Quick exit validation: if 'after' exceeds current version
+	// Quick exit validation
 	if hasAfter && afterVal > job.Version {
 		app.badRequestResponse(w, r, errors.New("after exceeds current version"))
 		return
 	}
 
-	// Immediate return if prompt snapshot, already terminal, or version is already advanced past 'after'
+	// Immediate return if snapshot, terminal, or version already advanced
 	if isPromptRequest || isTerminal || job.Version > afterVal {
 		app.writeJobResponse(w, r, job)
 		return
 	}
 
-	// WAIT-01: Subscribe FIRST before checking/waiting to avoid missing concurrent commits
+	// WAIT-01: Subscribe to notification hub for long-polling
 	ch := globalHub.Subscribe(jobID)
 	defer globalHub.Unsubscribe(jobID, ch)
 
-	// Recheck state right after subscribing
+	// Recheck state after subscribing
 	job, err = fetchJob()
 	if err == nil {
 		if hasAfter && afterVal > job.Version {
@@ -260,42 +275,32 @@ func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
 	timer := time.NewTimer(time.Duration(waitVal) * time.Second)
 	defer timer.Stop()
 
-	// Extend response write deadline to accommodate hold time plus buffer
 	if rc := http.NewResponseController(w); rc != nil {
 		_ = rc.SetWriteDeadline(time.Now().Add(time.Duration(waitVal+5) * time.Second))
 	}
 
-	// Hold request until notification signal, deadline, or context cancellation
+	// Hold request until notification signal, deadline, or cancellation
 	for {
 		select {
 		case <-r.Context().Done():
-			return // Client cancelled or disconnected (WAIT-02)
+			app.logger.Info("client disconnected during poll", "job_id", jobID)
+			return
 
 		case <-timer.C:
-			// Holding deadline expired. Recheck authoritative state before 204 (API-02)
 			job, err = fetchJob()
-			if err == nil {
-				if hasAfter && afterVal > job.Version {
-					app.badRequestResponse(w, r, errors.New("after exceeds current version"))
-					return
-				}
-				if job.Version > afterVal {
-					app.writeJobResponse(w, r, job)
-					return
-				}
+			if err == nil && job.Version > afterVal {
+				app.writeJobResponse(w, r, job)
+				return
 			}
+			app.logger.Info("long-poll hold expired with no changes, returning 204", "job_id", jobID)
 			w.WriteHeader(http.StatusNoContent)
 			return
 
 		case <-ch:
-			// Woken up by notification hub. Recheck authoritative database state (WAIT-01)
+			app.logger.Info("long-poll observer awakened by database commit notification", "job_id", jobID)
 			job, err = fetchJob()
 			if err != nil {
 				continue
-			}
-			if hasAfter && afterVal > job.Version {
-				app.badRequestResponse(w, r, errors.New("after exceeds current version"))
-				return
 			}
 			if job.Version > afterVal || job.Status == "completed" || job.Status == "failed" {
 				app.writeJobResponse(w, r, job)
