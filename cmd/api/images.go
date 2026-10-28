@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"strconv"
+	"time"
 
 	"imagelab/internal/data"
 )
@@ -167,7 +169,7 @@ func (app *application) uploadImageHandler(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-// getJobHandler exposes GET /v1/jobs/{job_id} for short-polling progress.
+// getJobHandler exposes GET /v1/jobs/{job_id} for both snapshot short-polling and versioned long-polling.
 func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("job_id")
 	if jobID == "" {
@@ -175,7 +177,42 @@ func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := app.models.Jobs.Get(jobID)
+	queryVals := r.URL.Query()
+	hasAfter := queryVals.Has("after")
+	hasWait := queryVals.Has("wait")
+
+	var afterVal int
+	var waitVal int = 20 // default wait
+
+	var err error
+	if hasAfter {
+		afterVal, err = strconv.Atoi(queryVals.Get("after"))
+		if err != nil || afterVal < 0 {
+			app.badRequestResponse(w, r, errors.New("malformed or negative 'after' parameter"))
+			return
+		}
+	}
+
+	if hasWait {
+		if !hasAfter {
+			app.badRequestResponse(w, r, errors.New("'wait' parameter requires 'after' parameter"))
+			return
+		}
+		waitVal, err = strconv.Atoi(queryVals.Get("wait"))
+		if err != nil || waitVal < 1 || waitVal > 20 {
+			app.badRequestResponse(w, r, errors.New("'wait' must be an integer between 1 and 20"))
+			return
+		}
+	}
+
+	// API-01: GET /v1/jobs/{id} without query parameters is a prompt snapshot response (never wait)
+	isPromptRequest := !hasAfter
+
+	fetchJob := func() (*data.Job, error) {
+		return app.models.Jobs.Get(jobID)
+	}
+
+	job, err := fetchJob()
 	if err != nil {
 		if errors.Is(err, data.ErrRecordNotFound) {
 			app.notFoundResponse(w, r)
@@ -185,12 +222,100 @@ func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set Cache-Control header (API-03)
+	w.Header().Set("Cache-Control", "no-store")
+
+	isTerminal := job.Status == "completed" || job.Status == "failed"
+
+	// Quick exit validation: if 'after' exceeds current version
+	if hasAfter && afterVal > job.Version {
+		app.badRequestResponse(w, r, errors.New("after exceeds current version"))
+		return
+	}
+
+	// Immediate return if prompt snapshot, already terminal, or version is already advanced past 'after'
+	if isPromptRequest || isTerminal || job.Version > afterVal {
+		app.writeJobResponse(w, r, job)
+		return
+	}
+
+	// WAIT-01: Subscribe FIRST before checking/waiting to avoid missing concurrent commits
+	ch := globalHub.Subscribe(jobID)
+	defer globalHub.Unsubscribe(jobID, ch)
+
+	// Recheck state right after subscribing
+	job, err = fetchJob()
+	if err == nil {
+		if hasAfter && afterVal > job.Version {
+			app.badRequestResponse(w, r, errors.New("after exceeds current version"))
+			return
+		}
+		if job.Version > afterVal || job.Status == "completed" || job.Status == "failed" {
+			app.writeJobResponse(w, r, job)
+			return
+		}
+	}
+
+	// Set up holding deadline timer (WAIT-03)
+	timer := time.NewTimer(time.Duration(waitVal) * time.Second)
+	defer timer.Stop()
+
+	// Extend response write deadline to accommodate hold time plus buffer
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Now().Add(time.Duration(waitVal+5) * time.Second))
+	}
+
+	// Hold request until notification signal, deadline, or context cancellation
+	for {
+		select {
+		case <-r.Context().Done():
+			return // Client cancelled or disconnected (WAIT-02)
+
+		case <-timer.C:
+			// Holding deadline expired. Recheck authoritative state before 204 (API-02)
+			job, err = fetchJob()
+			if err == nil {
+				if hasAfter && afterVal > job.Version {
+					app.badRequestResponse(w, r, errors.New("after exceeds current version"))
+					return
+				}
+				if job.Version > afterVal {
+					app.writeJobResponse(w, r, job)
+					return
+				}
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+
+		case <-ch:
+			// Woken up by notification hub. Recheck authoritative database state (WAIT-01)
+			job, err = fetchJob()
+			if err != nil {
+				continue
+			}
+			if hasAfter && afterVal > job.Version {
+				app.badRequestResponse(w, r, errors.New("after exceeds current version"))
+				return
+			}
+			if job.Version > afterVal || job.Status == "completed" || job.Status == "failed" {
+				app.writeJobResponse(w, r, job)
+				return
+			}
+		}
+	}
+}
+
+// writeJobResponse formats the standard job payload including version, stage, variants, and error details.
+func (app *application) writeJobResponse(w http.ResponseWriter, r *http.Request, job *data.Job) {
 	res := envelope{
-		"id":         job.ID,
-		"image_id":   job.ImageID,
-		"status":     job.Status,
-		"queued_at":  job.QueuedAt,
-		"started_at": job.StartedAt,
+		"id":                 job.ID,
+		"image_id":           job.ImageID,
+		"status":             job.Status,
+		"version":            job.Version,
+		"stage":              job.Stage,
+		"variants_completed": job.VariantsCompleted,
+		"queued_at":          job.QueuedAt,
+		"started_at":         job.StartedAt,
 	}
 
 	if job.Status == "completed" {
