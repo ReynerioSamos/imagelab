@@ -18,14 +18,18 @@ import (
 // distinguishable from a zero time: StartedAt == nil means the job is
 // still queued, CompletedAt == nil means it has not finished.
 type Job struct {
-	ID           string     `json:"id"`
-	ImageID      string     `json:"image_id"`
-	Status       string     `json:"status"`
-	ErrorMessage *string    `json:"error_message,omitempty"`
-	QueuedAt     time.Time  `json:"queued_at"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
-	CompletedAt  *time.Time `json:"completed_at,omitempty"`
-	FailedAt     *time.Time `json:"failed_at,omitempty"`
+	ID           			string     `json:"id"`
+	ImageID      			string     `json:"image_id"`
+	Status       			string     `json:"status"`
+	Stage					string     `json:"stage"`
+	Version      			int        `json:"version"`
+	VariantsCompleted 		int        `json:"variants_completed"`
+	SimulationStep 			int        `json:"simulation_step"`
+	ErrorMessage 			*string    `json:"error_message,omitempty"`
+	QueuedAt     			time.Time  `json:"queued_at"`
+	StartedAt    			*time.Time `json:"started_at,omitempty"`
+	CompletedAt  			*time.Time `json:"completed_at,omitempty"`
+	FailedAt     			*time.Time `json:"failed_at,omitempty"`
 }
 
 type JobModel struct {
@@ -62,7 +66,7 @@ func (m JobModel) Insert(imageID string) (*Job, error) {
 
 func (m JobModel) Get(id string) (*Job, error) {
 	query := `
-		SELECT id, image_id, status, error_message, queued_at, started_at, completed_at, failed_at
+		SELECT id, image_id, status, stage, version, variants_completed, simulation_step, error_message, queued_at, started_at, completed_at, failed_at
 		FROM jobs
 		WHERE id = $1`
 
@@ -74,6 +78,10 @@ func (m JobModel) Get(id string) (*Job, error) {
 		&job.ID,
 		&job.ImageID,
 		&job.Status,
+		&job.Stage,
+		&job.Version,
+		&job.VariantsCompleted,
+		&job.SimulationStep,
 		&job.ErrorMessage,
 		&job.QueuedAt,
 		&job.StartedAt,
@@ -104,7 +112,7 @@ func (m JobModel) ClaimNext() (*Job, error) {
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		)
-		RETURNING id, image_id, status, queued_at, started_at`
+		RETURNING id, image_id, status, stage, version, variants_completed, simulation_step, queued_at, started_at`
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -114,6 +122,10 @@ func (m JobModel) ClaimNext() (*Job, error) {
 		&job.ID,
 		&job.ImageID,
 		&job.Status,
+		&job.Stage,
+		&job.Version,
+		&job.VariantsCompleted,
+		&job.SimulationStep,
 		&job.QueuedAt,
 		&job.StartedAt,
 	)
