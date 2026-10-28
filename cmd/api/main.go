@@ -33,6 +33,11 @@ type config struct {
 		maxIdleConns int
 		maxIdleTime  time.Duration
 	}
+	// flags needed for experiment
+	experiment struct {
+		quietDelay         time.Duration
+		simulationInterval time.Duration
+	}
 }
 
 type application struct {
@@ -50,16 +55,15 @@ func main() {
 	flag.StringVar(&cfg.storage.root, "storage-root", "./storage", "Filesystem root for original and variant images")
 	flag.Int64Var(&cfg.upload.maxBytes, "max-upload-bytes", 10<<20, "Maximum accepted upload size in bytes (VAL-01: 10 MB)")
 	// worker delay flag in server start logs
-	flag.DurationVar(&cfg.worker.delay, "worker-delay", 4*time.Second,
-		"Artificial per-variant processing delay. 0 by default -- set e.g. 1s only "+
-			"when you deliberately want queue wait to be observable, such as the "+
-			"five-image burst measurement in Week 4. Never leave this set for "+
-			"timings meant to reflect real work.")
+	flag.DurationVar(&cfg.worker.delay, "worker-delay", 0,
+		"Artificial per-variant processing delay. 0 by default")
 
 	flag.StringVar(&cfg.db.dsn, "db-dsn", "", "PostgreSQL DSN")
 	flag.IntVar(&cfg.db.maxOpenConns, "db-max-open-conns", 25, "PostgreSQL max open connections")
 	flag.IntVar(&cfg.db.maxIdleConns, "db-max-idle-conns", 25, "PostgreSQL max idle connections")
 	flag.DurationVar(&cfg.db.maxIdleTime, "db-max-idle-time", 15*time.Minute, "PostgreSQL max connection idle time")
+	flag.DurationVar(&cfg.experiment.quietDelay, "exp-quiet-delay", 0, "Condition A: 30s quiet delay with no intermediate updates")
+	flag.DurationVar(&cfg.experiment.simulationInterval, "exp-simulation-interval", 0, "Condition C1/C2/C3: Simulated update phase interval (e.g. 2s or 200ms)")
 
 	flag.Parse()
 
@@ -83,12 +87,26 @@ func main() {
 	// server logs show worker delay
 	// Test 2 - Updated to pass a callback to the worker that calls globalHub.NotifyAll after a successful transaction commit
 	// used so it can wake up long-polling observers after a job state change
-	w := worker.New(models, cfg.storage.root, logger, cfg.worker.delay, func(jobID string) {
-		globalHub.NotifyAll(jobID)
-	})
+	w := worker.New(
+		models,
+		cfg.storage.root,
+		logger,
+		cfg.worker.delay,
+		cfg.experiment.quietDelay,
+		cfg.experiment.simulationInterval,
+		func(jobID string) {
+			globalHub.NotifyAll(jobID)
+		},
+	)
 
 	if cfg.worker.delay > 0 {
 		logger.Info("worker artificial delay enabled", "delay", cfg.worker.delay)
+	}
+	if cfg.experiment.quietDelay > 0 {
+		logger.Info("experiment quiet delay enabled", "quiet_delay", cfg.experiment.quietDelay)
+	}
+	if cfg.experiment.simulationInterval > 0 {
+		logger.Info("experiment simulation interval enabled", "interval", cfg.experiment.simulationInterval)
 	}
 
 	app := &application{

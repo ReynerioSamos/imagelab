@@ -43,13 +43,13 @@ services:
       IMAGELAB_DB_DSN: "postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable"
       PORT: "4000"
     volumes:
-      # FIXED: Matches the /app/storage path from your Dockerfile
+      # FIXED: Matches the /app/storage path in the Dockerfile and the storage-root flag in main.go
       - ./storage:/app/storage
     depends_on:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
-    command: /app/api -db-dsn="postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable"
+    command: /app/api -db-dsn="postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable" -exp-quiet-delay=30s
 
 volumes:
   pgdata:
