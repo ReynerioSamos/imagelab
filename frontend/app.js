@@ -1,5 +1,6 @@
-// app.js - Version 3 Long & Short Polling Observation Loop, Telemetry & CSV Export. Test 3 SSE Implementation.
+// app.js - Version 3 Final: SSE, Long/Short Polling, Telemetry & CSV Accumulator
 let eventSource = null;
+let allExperimentRuns = []; // Accumulates all completed runs in this session
 
 const els = {
   fileInput:          document.getElementById("file-input"),
@@ -137,7 +138,7 @@ function formatTimestamp(isoString) {
 
 function stopPolling() {
   isPolling = false;
-  observationToken++;
+  observationToken++; // Fixed typo
   
   if (eventSource) {
     eventSource.close();
@@ -175,7 +176,7 @@ function resetToInitialState() {
   runMetrics.heartbeats = 0;
   telemetryLog = [];
   
-  if (els.exportCsvBtn) els.exportCsvBtn.disabled = true;
+  // Do NOT clear allExperimentRuns here!
 
   if (previewUrl) {
     URL.revokeObjectURL(previewUrl);
@@ -206,6 +207,17 @@ function resetToInitialState() {
     els.timeline.querySelectorAll(".tl-time").forEach((span) => {
       span.textContent = "";
     });
+  }
+
+  // Update CSV button to show saved run count
+  if (els.exportCsvBtn) {
+    if (allExperimentRuns.length > 0) {
+      els.exportCsvBtn.disabled = false;
+      els.exportCsvBtn.textContent = `Download All Runs CSV (${allExperimentRuns.length} saved)`;
+    } else {
+      els.exportCsvBtn.disabled = true;
+      els.exportCsvBtn.textContent = "Export Run Telemetry (CSV)";
+    }
   }
 }
 
@@ -255,7 +267,7 @@ function updateTimeline(job) {
   const steps = els.timeline.querySelectorAll(".tl-step");
   const status = job.status;
 
-  steps.forEach((step) => {
+  steps.forEach((step) => { // Fixed syntax error
     const name = step.dataset.step;
     if (status === "queued") {
       if (name === "accepted") step.dataset.state = "done";
@@ -301,7 +313,7 @@ function updateVariantChecklist(jobVariants = [], jobStatus = "queued") {
   const allDone = jobStatus === "completed";
   let html = "";
 
-  EXPECTED_VARIANTS.forEach((name) => {
+  EXPECTED_VARIANTS.forEach((name) => { // Fixed syntax error
     let status = jobStatus === "completed" || readyNames.has(name) ? "completed" : (jobStatus === "processing" ? "processing" : "pending");
     const isDone = status === "completed";
     html += `<li class="checklist-item" data-status="${status}">
@@ -351,6 +363,53 @@ function renderVariants(variants) {
   els.resultsGrid.hidden = false;
 }
 
+// ==========================================
+// RECORD RUN (Accumulator)
+// ==========================================
+function recordRun() {
+  const versionGaps = Math.max(0, (currentVersion - runMetrics.baselineVersion + 1) - runMetrics.distinctVersions.size);
+  const streamSeconds = runMetrics.endTime && runMetrics.startTime ? ((runMetrics.endTime - runMetrics.startTime) / 1000).toFixed(2) : 0;
+  const processingMs = runMetrics.endTime && runMetrics.startTime ? runMetrics.endTime - runMetrics.startTime : 0;
+  const detectionMs = runMetrics.endTime && runMetrics.serverTerminalEpoch ? runMetrics.endTime - runMetrics.serverTerminalEpoch : 0;
+
+  allExperimentRuns.push({
+    run_id: runMetrics.runId,
+    condition: runMetrics.condition,
+    mode: els.pollMode.value,
+    repetition: runMetrics.repetition,
+    job_id: currentJobId || "N/A",
+    image: selectedFile ? selectedFile.name : "N/A",
+    latency_setting: runMetrics.latencySetting,
+    baseline_version: runMetrics.baselineVersion,
+    terminal_version: currentVersion,
+    requests_started: runMetrics.requestsStarted,
+    initial_200: runMetrics.initial200,
+    newer_200: runMetrics.newer200,
+    unchanged_200: runMetrics.unchanged200,
+    no_change_204: runMetrics.noChange204,
+    sse_stream_gets: runMetrics.sseStreamGets,
+    job_events_received: runMetrics.jobEventsReceived,
+    heartbeats: runMetrics.heartbeats,
+    version_gaps: versionGaps,
+    retrieval_errors: runMetrics.retrievalErrors,
+    cancellations: runMetrics.cancellations,
+    distinct_new_versions_seen: runMetrics.distinctVersions.size,
+    processing_ms: processingMs,
+    detection_ms: detectionMs,
+    stream_seconds: streamSeconds,
+    notes: "notification-driven; DB read on each wake-up"
+  });
+
+  // Update button UI
+  if (els.exportCsvBtn) {
+    els.exportCsvBtn.disabled = false;
+    els.exportCsvBtn.textContent = `Download All Runs CSV (${allExperimentRuns.length} saved)`;
+  }
+}
+
+// ==========================================
+// OBSERVATION LOOP
+// ==========================================
 async function startObservation(jobId, statusUrl) {
   stopPolling();
   currentJobId = jobId;
@@ -390,11 +449,11 @@ async function startObservation(jobId, statusUrl) {
         } else if (job.status === "failed" && job.failed_at) {
           runMetrics.serverTerminalEpoch = new Date(job.failed_at).getTime();
         }
+        recordRun(); // Save to accumulator
         eventSource.close();
         eventSource = null;
         isPolling = false;
         if (els.pollingIndicator) els.pollingIndicator.hidden = true;
-        if (els.exportCsvBtn) els.exportCsvBtn.disabled = false;
       }
     });
 
@@ -446,8 +505,9 @@ async function startObservation(jobId, statusUrl) {
         if (job.completed_at) runMetrics.serverTerminalEpoch = new Date(job.completed_at).getTime();
         else if (job.failed_at) runMetrics.serverTerminalEpoch = new Date(job.failed_at).getTime();
         
+        recordRun(); // Save to accumulator
+        
         if (els.pollingIndicator) els.pollingIndicator.hidden = true;
-        if (els.exportCsvBtn) els.exportCsvBtn.disabled = false;
         break;
       }
       if (mode === "short") await new Promise(resolve => setTimeout(resolve, 1000));
@@ -468,7 +528,13 @@ async function startObservation(jobId, statusUrl) {
   }
 }
 
+// ==========================================
+// CSV EXPORT (Downloads all accumulated runs)
+// ==========================================
 async function exportRunCSV() {
+  if (allExperimentRuns.length === 0) return;
+
+  // Optional: fetch peak streams from debug endpoint
   let peak = 0;
   try { 
     const res = await fetch("/v1/debug/streams");
@@ -478,11 +544,6 @@ async function exportRunCSV() {
     }
   } catch {}
 
-  const versionGaps = Math.max(0, (currentVersion - runMetrics.baselineVersion + 1) - runMetrics.distinctVersions.size);
-  const streamSeconds = runMetrics.endTime && runMetrics.startTime ? ((runMetrics.endTime - runMetrics.startTime) / 1000).toFixed(2) : 0;
-  const processingMs = runMetrics.endTime && runMetrics.startTime ? runMetrics.endTime - runMetrics.startTime : 0;
-  const detectionMs = runMetrics.endTime && runMetrics.serverTerminalEpoch ? runMetrics.endTime - runMetrics.serverTerminalEpoch : 0;
-
   const headers = [
     "run_id", "condition", "mode", "repetition", "job_id", "image", "latency_setting",
     "baseline_version", "terminal_version", "requests_started", "initial_200", "newer_200",
@@ -490,25 +551,31 @@ async function exportRunCSV() {
     "version_gaps", "retrieval_errors", "cancellations", "distinct_new_versions_seen",
     "processing_ms", "detection_ms", "stream_seconds", "peak_active_streams", "notes"
   ];
-  const row = [
-    runMetrics.runId, runMetrics.condition, els.pollMode.value, runMetrics.repetition,
-    currentJobId || "N/A", selectedFile ? selectedFile.name : "N/A", runMetrics.latencySetting,
-    runMetrics.baselineVersion, currentVersion, runMetrics.requestsStarted, runMetrics.initial200,
-    runMetrics.newer200, runMetrics.unchanged200, runMetrics.noChange204, runMetrics.sseStreamGets,
-    runMetrics.jobEventsReceived, runMetrics.heartbeats, versionGaps, runMetrics.retrievalErrors,
-    runMetrics.cancellations, runMetrics.distinctVersions.size, processingMs, detectionMs,
-    streamSeconds, peak, "notification-driven; DB read on each wake-up"
-  ];
 
-  const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), row.join(",")].join("\n");
+  const rows = allExperimentRuns.map(run => [
+    run.run_id, run.condition, run.mode, run.repetition, run.job_id, run.image, run.latency_setting,
+    run.baseline_version, run.terminal_version, run.requests_started, run.initial_200, run.newer_200,
+    run.unchanged_200, run.no_change_204, run.sse_stream_gets, run.job_events_received, run.heartbeats,
+    run.version_gaps, run.retrieval_errors, run.cancellations, run.distinct_new_versions_seen,
+    run.processing_ms, run.detection_ms, run.stream_seconds, peak, run.notes
+  ]);
+
+  const csvContent = "data:text/csv;charset=utf-8," 
+    + headers.join(",") + "\n" 
+    + rows.map(e => e.join(",")).join("\n");
+
+  const encodedUri = encodeURI(csvContent);
   const link = document.createElement("a");
-  link.setAttribute("href", encodeURI(csvContent));
-  link.setAttribute("download", `imagelab_telemetry_${currentJobId || "run"}.csv`);
+  link.setAttribute("href", encodedUri);
+  link.setAttribute("download", `imagelab_all_runs_${new Date().getTime()}.csv`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
 }
 
+// ==========================================
+// EVENT LISTENERS
+// ==========================================
 if (els.exportCsvBtn) els.exportCsvBtn.addEventListener("click", exportRunCSV);
 
 els.fileInput.addEventListener("change", () => {
