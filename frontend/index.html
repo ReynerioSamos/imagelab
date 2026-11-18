@@ -7,8 +7,6 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-
-  <!-- Top bar -->
   <header class="topbar">
     <div class="brand">
       <span class="brand-mark" aria-hidden="true">
@@ -33,9 +31,7 @@
       <p class="page-sub">Upload an image and generate optimized variants in the background.</p>
     </div>
 
-    <!-- Two-column grid: Upload + Processing job -->
     <div class="grid-2">
-
       <!-- Upload card -->
       <section class="card" aria-labelledby="upload-heading">
         <div class="card-head">
@@ -48,7 +44,6 @@
           </span>
           <h2 id="upload-heading">Upload image</h2>
         </div>
-
         <div class="dropzone">
           <div id="dropzone-empty" class="dropzone-empty">
             <span class="dz-icon" aria-hidden="true">
@@ -63,7 +58,6 @@
             <input id="file-input" type="file" accept="image/jpeg,image/png">
             <p id="constraints-note" class="dz-note">JPEG or PNG · up to 10.0 MB</p>
           </div>
-
           <div id="dropzone-selected" class="dropzone-selected" hidden>
             <img id="preview-img" class="preview-thumb" alt="Selected image preview">
             <div class="selected-meta">
@@ -75,7 +69,6 @@
             </div>
           </div>
         </div>
-
         <button id="process-button" class="btn btn-primary btn-block" disabled>
           <span class="btn-ico" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -85,14 +78,11 @@
           </span>
           <span id="process-button-label">Process image</span>
         </button>
-
         <div id="upload-message" class="form-message" hidden></div>
       </section>
 
       <!-- Processing job card -->
       <section class="card" aria-labelledby="job-heading">
-        
-        <!-- Card head: icon + title + mode selector + badge -->
         <div class="card-head">
           <span class="card-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -101,7 +91,6 @@
             </svg>
           </span>
           <h2 id="job-heading">Processing job</h2>
-
           <div class="mode-control">
             <label for="poll-mode">Mode:</label>
             <select id="poll-mode">
@@ -110,17 +99,14 @@
               <option value="sse">Server Sent Events</option>
             </select>
           </div>
-
           <span id="status-badge" class="badge badge-idle">Idle</span>
         </div>
 
-        <!-- Idle state -->
         <div id="job-idle" class="job-idle">
           <p class="muted">No active job</p>
           <p class="muted-sm">Submit an image to create a processing job.</p>
         </div>
 
-        <!-- Active state: Job ID / Polls / Version grid goes HERE, after card-head -->
         <div id="job-active" hidden>
           <div class="job-meta-grid">
             <div>
@@ -130,10 +116,6 @@
             <div>
               <p class="job-id-label">Polls</p>
               <p id="poll-count" class="job-meta-value">0</p>
-            </div>
-            <div style="display:flex; gap:0.5rem; margin-top:0.75rem;">
-              <button id="stop-observe-btn" class="btn btn-ghost btn-sm">Stop observing</button>
-              <button id="resume-observe-btn" class="btn btn-ghost btn-sm" hidden>Resume observing</button>
             </div>
             <div>
               <p class="job-id-label">Version</p>
@@ -170,15 +152,18 @@
             <span>Checking status automatically · <span id="polling-mode-label">active observation loop</span></span>
           </div>
 
+          <div style="display:flex; gap:0.5rem; margin-top:0.75rem;">
+            <button id="stop-observe-btn" class="btn btn-ghost btn-sm" hidden>Stop observing</button>
+            <button id="resume-observe-btn" class="btn btn-ghost btn-sm" hidden>Resume observing</button>
+          </div>
+
           <div id="retrieval-error" class="retrieval-error" hidden>
             <p class="retrieval-text">Unable to check status. The job may still be running.</p>
             <button id="try-again-button" class="btn btn-ghost btn-sm">Try again</button>
           </div>
         </div>
       </section>
-
     </div>
-    <!-- End of two-column grid -->
 
     <!-- Generated images: full-width row BELOW the grid -->
     <section class="card results-card" aria-labelledby="results-heading">
@@ -192,47 +177,38 @@
         </span>
         <h2 id="results-heading">Generated images</h2>
       </div>
-
       <div id="results-empty" class="muted">No images generated yet</div>
       <div id="results-grid" class="results-grid" hidden></div>
     </section>
 
-    <!-- Experimental Workload Controls: full-width row -->
+    <!-- Experimental Workload Controls -->
     <section class="card" aria-labelledby="experiment-heading">
       <div class="card-head">
         <h2 id="experiment-heading" style="color: var(--accent);">Experimental Workload Controls</h2>
       </div>
-
       <div style="display: flex; flex-direction: column; gap: 0.85rem;">
         <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem;">
           <input id="sim-progress-toggle" type="checkbox">
           <span>Simulated progress (EXP-02)</span>
         </label>
-
         <select id="condition-select" disabled style="background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; font-size: 0.88rem;">
           <option value="Condition_A">Condition A (Quiet Job / 30s delay)</option>
           <option value="Condition_B" selected>Condition B (Real Progress Baseline)</option>
           <option value="Condition_C1">Condition C1 (Slow Updates - 2s)</option>
           <option value="Condition_C2">Condition C2 (Fast Updates - 200ms)</option>
-          <option value="Condition_C3">Condition C3 (Fast Updates + 200ms Latency)</option>
         </select>
-
         <select id="sim-interval-select" disabled style="background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; font-size: 0.88rem;">
           <option value="2s">2s</option>
           <option value="200ms">200ms</option>
         </select>
-
         <button id="export-csv-btn" class="btn btn-ghost btn-block" disabled>Export Run Telemetry (CSV)</button>
       </div>
     </section>
 
-    <!-- Footer -->
     <footer class="page-foot">
       <p>Reynerio Samos & Chahiim Pop 2026</p>
     </footer>
-
   </main>
-
   <script src="/app.js"></script>
 </body>
 </html>

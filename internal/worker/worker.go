@@ -163,7 +163,7 @@ func (w *Worker) executeJob(ctx context.Context, job *data.Job) error {
 			if err != nil {
 				return err
 			}
-			stageMsg := fmt.Sprintf("Simulated progress (step %d/5)", step)
+			stageMsg := fmt.Sprintf("Simulated progress (step %d/%d)", step, maxSteps)
 			newVersion, updateErr := w.models.Jobs.UpdateProgressTx(ctx, tx, job.ID, stageMsg, 0)
 			if updateErr != nil {
 				tx.Rollback()

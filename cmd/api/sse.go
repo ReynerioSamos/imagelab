@@ -18,8 +18,7 @@ func (app *application) sseJobHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// SSE-02: 404 for unknown job BEFORE streaming.
-	job, err := app.models.Jobs.Get(jobID)
-	if err != nil {
+	if _, err := app.models.Jobs.Get(jobID); err != nil {
 		if errors.Is(err, data.ErrRecordNotFound) {
 			app.notFoundResponse(w, r)
 			return
@@ -34,9 +33,10 @@ func (app *application) sseJobHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 
 	rc := http.NewResponseController(w)
-	// write deadline so Condition A / long jobs are not severed mid-stream.
+	// Clear write deadline so Condition A / long jobs are not severed mid-stream.
 	_ = rc.SetWriteDeadline(time.Time{})
 
+	// SYNC-03: Subscribe FIRST to prevent missing a change between read and wait.
 	ch := globalHub.Subscribe(jobID)
 	defer globalHub.Unsubscribe(jobID, ch)
 
@@ -52,6 +52,12 @@ func (app *application) sseJobHandler(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		return rc.Flush() // SSE-06
+	}
+
+	// NOW read the authoritative initial snapshot.
+	job, err := app.models.Jobs.Get(jobID)
+	if err != nil {
+		return
 	}
 
 	// SSE-04: immediate snapshot.
