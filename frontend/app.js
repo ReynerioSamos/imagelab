@@ -1,5 +1,5 @@
 // app.js - Version 3 Long & Short Polling Observation Loop, Telemetry & CSV Export. Test 3 SSE Implementation.
-let eventSource = null; // For SSE
+let eventSource = null;
 
 const els = {
   fileInput:          document.getElementById("file-input"),
@@ -25,14 +25,13 @@ const els = {
   pollingModeLabel:   document.getElementById("polling-mode-label"),
   retrievalError:     document.getElementById("retrieval-error"),
   tryAgainButton:     document.getElementById("try-again-button"),
+  stopObserveBtn:     document.getElementById("stop-observe-btn"),
+  resumeObserveBtn:   document.getElementById("resume-observe-btn"),
   resultsEmpty:       document.getElementById("results-empty"),
   resultsGrid:        document.getElementById("results-grid"),
   exportCsvBtn:       document.getElementById("export-csv-btn"),
 };
 
-// ==========================================
-// PHASE 3: Metrics & Telemetry State
-// ==========================================
 let runMetrics = {
   runId: "run_01",
   get condition() {
@@ -111,7 +110,7 @@ function clearMessage() {
 function renderConstraintsNote() {
   const exts = constraints.acceptedExtensions.map((e) => e.replace(".", "").toUpperCase());
   const unique = [...new Set(exts)].join(" or ");
-  els.constraintsNote.textContent = `${unique} \u00b7 up to ${formatBytes(constraints.maxBytes)}`;
+  els.constraintsNote.textContent = `${unique} · up to ${formatBytes(constraints.maxBytes)}`;
 }
 
 async function loadConstraints() {
@@ -200,6 +199,8 @@ function resetToInitialState() {
   els.resultsGrid.innerHTML = "";
   if (els.checklistItems) els.checklistItems.innerHTML = "";
   if (els.retrievalError) els.retrievalError.hidden = true;
+  if (els.stopObserveBtn) els.stopObserveBtn.hidden = true;
+  if (els.resumeObserveBtn) els.resumeObserveBtn.hidden = true;
 
   if (els.timeline) {
     els.timeline.querySelectorAll(".tl-time").forEach((span) => {
@@ -215,12 +216,12 @@ function showSelected(file) {
   els.previewImg.src = previewUrl;
 
   els.metaFilename.textContent = file.name;
-  els.metaLine.textContent = `${formatBytes(file.size)} \u00b7 ${shortTypeLabel(file.type)}`;
+  els.metaLine.textContent = `${formatBytes(file.size)} · ${shortTypeLabel(file.type)}`;
   els.previewImg.onload = () => {
     const w = els.previewImg.naturalWidth;
     const h = els.previewImg.naturalHeight;
     if (w && h) {
-      els.metaLine.textContent = `${formatBytes(file.size)} \u00b7 ${shortTypeLabel(file.type)} \u00b7 ${w} \u00d7 ${h}`;
+      els.metaLine.textContent = `${formatBytes(file.size)} · ${shortTypeLabel(file.type)} · ${w} × ${h}`;
     }
   };
 
@@ -231,13 +232,11 @@ function showSelected(file) {
 
 function renderJobState(job) {
   currentVersion = job.version;
-
   if (els.jobVersion) els.jobVersion.textContent = `v${job.version}`;
   if (els.statusBadge) {
     els.statusBadge.className = `badge badge-${job.status}`;
     els.statusBadge.textContent = job.status.charAt(0).toUpperCase() + job.status.slice(1);
   }
-
   updateTimeline(job);
   updateVariantChecklist(job.variants || [], job.status);
 
@@ -296,152 +295,101 @@ function updateTimeline(job) {
 
 function updateVariantChecklist(jobVariants = [], jobStatus = "queued") {
   if (!els.checklistItems) return;
-
-  const readyNames = new Set(
-    (jobVariants || []).map((v) => v.name.charAt(0).toUpperCase() + v.name.slice(1))
-  );
-
+  const readyNames = new Set((jobVariants || []).map((v) => v.name.charAt(0).toUpperCase() + v.name.slice(1)));
   const totalExpected = EXPECTED_VARIANTS.length;
   const completedCount = jobStatus === "completed" ? totalExpected : readyNames.size;
   const allDone = jobStatus === "completed";
-
   let html = "";
 
   EXPECTED_VARIANTS.forEach((name) => {
-    let status;
-    if (jobStatus === "completed" || readyNames.has(name)) status = "completed";
-    else if (jobStatus === "processing") status = "processing";
-    else status = "pending";
+    let status = jobStatus === "completed" || readyNames.has(name) ? "completed" : (jobStatus === "processing" ? "processing" : "pending");
     const isDone = status === "completed";
-
-    html += `
-      <li class="checklist-item" data-status="${status}">
-        <span class="checklist-checkbox">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="20 6 9 17 4 12"/>
-          </svg>
-        </span>
-        <span>${name} variant (${isDone ? "Ready" : status})</span>
-      </li>
-    `;
+    html += `<li class="checklist-item" data-status="${status}">
+      <span class="checklist-checkbox"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+      <span>${name} variant (${isDone ? "Ready" : status})</span>
+    </li>`;
   });
 
-  html += `
-    <li class="checklist-item" data-status="${allDone ? "completed" : "pending"}" style="margin-top: 0.3rem; font-weight: 600;">
-      <span class="checklist-checkbox">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="20 6 9 17 4 12"/>
-        </svg>
-      </span>
-      <span>${allDone ? "All variants completed" : `Processing variants... (${completedCount}/${totalExpected})`}</span>
-    </li>
-  `;
-
+  html += `<li class="checklist-item" data-status="${allDone ? "completed" : "pending"}" style="margin-top: 0.3rem; font-weight: 600;">
+    <span class="checklist-checkbox"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+    <span>${allDone ? "All variants completed" : `Processing variants... (${completedCount}/${totalExpected})`}</span>
+  </li>`;
   els.checklistItems.innerHTML = html;
 }
 
 function renderVariants(variants) {
   els.resultsGrid.innerHTML = "";
-  
   const order = { thumbnail: 1, preview: 2, display: 3 };
   variants.sort((a, b) => (order[a.name] || 99) - (order[b.name] || 99));
 
   variants.forEach((variant) => {
     const card = document.createElement("div");
     card.className = "variant-card";
-
     const title = variant.name.charAt(0).toUpperCase() + variant.name.slice(1);
     const variantStatus = variant.status || "completed";
     const statusLabel = variantStatus.charAt(0).toUpperCase() + variantStatus.slice(1);
 
     card.innerHTML = `
-      <div class="variant-media">
-        <img src="${variant.url}" alt="${variant.name} variant" loading="lazy" />
-      </div>
+      <div class="variant-media"><img src="${variant.url}" alt="${variant.name} variant" loading="lazy" /></div>
       <div class="variant-body">
         <div>
           <div style="display: flex; align-items: center; gap: 0.5rem;">
             <p class="variant-name">${title}</p>
             <span class="badge badge-${variantStatus.toLowerCase()}">${statusLabel}</span>
           </div>
-          <p class="variant-dims">${variant.width} \u00d7 ${variant.height} px</p>
+          <p class="variant-dims">${variant.width} × ${variant.height} px</p>
         </div>
         <a href="${variant.url}" download class="variant-download" title="Download ${title}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
         </a>
-      </div>
-    `;
+      </div>`;
     els.resultsGrid.appendChild(card);
   });
-
   els.resultsEmpty.hidden = true;
   els.resultsGrid.hidden = false;
 }
 
-// ==========================================
-// OBSERVATION LOOP WITH PHASE 3 TELEMETRY
-// ==========================================
 async function startObservation(jobId, statusUrl) {
   stopPolling();
-
   currentJobId = jobId;
   currentStatusUrl = statusUrl;
   isPolling = true;
   const token = observationToken;
 
-  if (!runMetrics.startTime) {
-    runMetrics.startTime = Date.now();
-  }
-
+  if (!runMetrics.startTime) runMetrics.startTime = Date.now();
   if (els.retrievalError) els.retrievalError.hidden = true;
   if (els.pollingIndicator) els.pollingIndicator.hidden = false;
-
   updateVariantChecklist([], "queued");
 
   const mode = els.pollMode ? els.pollMode.value : "long";
-  
   if (els.pollingModeLabel) {
-    if (mode === "sse") {
-      els.pollingModeLabel.textContent = "SSE (listening)";
-    } else {
-      els.pollingModeLabel.textContent = mode === "long" ? "long-polling loop" : "short-polling interval (1s)";
-    }
+    els.pollingModeLabel.textContent = mode === "sse" ? "SSE (listening)" : (mode === "long" ? "long-polling loop" : "short-polling interval (1s)");
   }
 
-  // ==========================================
-  // SERVER SENT EVENTS (SSE)
-  // ==========================================
+  // ==================== SSE MODE ====================
   if (mode === "sse") {
-    runMetrics.sseStreamGets++;
     eventSource = new EventSource(`/v1/jobs/${jobId}/events`);
-
-    eventSource.addEventListener("heartbeat", () => {
-      runMetrics.heartbeats++;
-    });
-
+    
+    eventSource.addEventListener("open", () => { runMetrics.sseStreamGets++; });
+    eventSource.addEventListener("heartbeat", () => { runMetrics.heartbeats++; });
+    
     eventSource.addEventListener("job-update", (event) => {
       runMetrics.jobEventsReceived++;
       const data = JSON.parse(event.data);
       const job = data.job;
-
       runMetrics.distinctVersions.add(job.version);
       renderJobState(job);
-
-      if (els.pollCount) {
-        els.pollCount.textContent = runMetrics.jobEventsReceived;
-      }
+      if (els.pollCount) els.pollCount.textContent = runMetrics.jobEventsReceived;
 
       if (job.status === "completed" || job.status === "failed") {
         runMetrics.endTime = Date.now();
-        
         if (job.status === "completed" && job.completed_at) {
           runMetrics.serverTerminalEpoch = new Date(job.completed_at).getTime();
         } else if (job.status === "failed" && job.failed_at) {
           runMetrics.serverTerminalEpoch = new Date(job.failed_at).getTime();
         }
-
         eventSource.close();
         eventSource = null;
         isPolling = false;
@@ -451,17 +399,12 @@ async function startObservation(jobId, statusUrl) {
     });
 
     eventSource.addEventListener("error", () => {
-      if (els.pollingModeLabel) {
-        els.pollingModeLabel.textContent = "SSE (reconnecting...)";
-      }
+      if (els.pollingModeLabel) els.pollingModeLabel.textContent = "SSE (reconnecting...)";
     });
-
     return;
   }
 
-  // ==========================================
-  // POLLING MODES
-  // ==========================================
+  // ==================== POLLING MODES ====================
   while (isPolling && token === observationToken) {
     pollController = new AbortController();
     const timeoutId = setTimeout(() => pollController.abort(), 30000);
@@ -469,87 +412,53 @@ async function startObservation(jobId, statusUrl) {
 
     try {
       let url = statusUrl;
-      if (mode === "long" && currentVersion > 0) {
-        url += `?after=${currentVersion}&wait=20`;
-      }
+      if (mode === "long" && currentVersion > 0) url += `?after=${currentVersion}&wait=20`;
 
       totalPollRequests++;
       if (els.pollCount) els.pollCount.textContent = totalPollRequests;
 
-      const response = await fetch(url, {
-        signal: pollController.signal,
-        headers: { "Cache-Control": "no-store" }
-      });
-      
+      const response = await fetch(url, { signal: pollController.signal, headers: { "Cache-Control": "no-store" } });
       const reqReceiptTime = Date.now();
       clearTimeout(timeoutId);
-
       runMetrics.requestsStarted++;
 
       if (response.status === 204) {
         runMetrics.noChange204++;
-        telemetryLog.push({
-          start_time: reqStartTime,
-          receipt_time: reqReceiptTime,
-          status_code: 204,
-          response_version: currentVersion,
-        });
+        telemetryLog.push({ start_time: reqStartTime, receipt_time: reqReceiptTime, status_code: 204, response_version: currentVersion });
         continue;
       }
-
-      if (!response.ok) {
-        throw new Error(`Server returned status ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`Server returned status ${response.status}`);
 
       const data = await response.json();
       const job = data.job;
       const respVersion = job.version;
 
-      if (runMetrics.requestsStarted === 1 || currentVersion === 0) {
-        runMetrics.initial200++;
-      } else if (respVersion > currentVersion) {
-        runMetrics.newer200++;
-        runMetrics.distinctVersions.add(respVersion);
-      } else {
-        runMetrics.unchanged200++;
-      }
+      if (runMetrics.requestsStarted === 1 || currentVersion === 0) runMetrics.initial200++;
+      else if (respVersion > currentVersion) { runMetrics.newer200++; runMetrics.distinctVersions.add(respVersion); }
+      else runMetrics.unchanged200++;
 
-      telemetryLog.push({
-        start_time: reqStartTime,
-        receipt_time: reqReceiptTime,
-        status_code: 200,
-        response_version: respVersion,
-      });
-
+      telemetryLog.push({ start_time: reqStartTime, receipt_time: reqReceiptTime, status_code: 200, response_version: respVersion });
       renderJobState(job);
 
       if (job.status === "completed" || job.status === "failed") {
         isPolling = false;
         runMetrics.endTime = Date.now();
-        if (job.completed_at) {
-          runMetrics.serverTerminalEpoch = new Date(job.completed_at).getTime();
-        } else if (job.failed_at) {
-          runMetrics.serverTerminalEpoch = new Date(job.failed_at).getTime();
-        }
+        if (job.completed_at) runMetrics.serverTerminalEpoch = new Date(job.completed_at).getTime();
+        else if (job.failed_at) runMetrics.serverTerminalEpoch = new Date(job.failed_at).getTime();
         
         if (els.pollingIndicator) els.pollingIndicator.hidden = true;
         if (els.exportCsvBtn) els.exportCsvBtn.disabled = false;
         break;
       }
-
-      if (mode === "short") {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
+      if (mode === "short") await new Promise(resolve => setTimeout(resolve, 1000));
 
     } catch (err) {
       clearTimeout(timeoutId);
-
       if (err.name === "AbortError") {
         if (token !== observationToken) break;
         runMetrics.cancellations++;
         continue;
       }
-
       runMetrics.retrievalErrors++;
       isPolling = false;
       if (els.pollingIndicator) els.pollingIndicator.hidden = true;
@@ -559,99 +468,77 @@ async function startObservation(jobId, statusUrl) {
   }
 }
 
-// ==========================================
-// CSV Export Handler
-// ==========================================
-function exportRunCSV() {
-  const headers = [
-    "run_id", "condition", "mode", "repetition", "job_id", "image", 
-    "latency_setting", "baseline_version", "terminal_version", 
-    "requests_started", "initial_200", "newer_200", "unchanged_200", "no_change_204",
-    "sse_stream_gets", "job_events_received", "heartbeats",
-    "retrieval_errors", "cancellations", "distinct_new_versions_seen", 
-    "processing_ms", "detection_ms", "notes"
-  ];
+async function exportRunCSV() {
+  let peak = 0;
+  try { 
+    const res = await fetch("/v1/debug/streams");
+    if (res.ok) {
+      const data = await res.json();
+      peak = data.peak_streams ?? 0;
+    }
+  } catch {}
 
+  const versionGaps = Math.max(0, (currentVersion - runMetrics.baselineVersion + 1) - runMetrics.distinctVersions.size);
+  const streamSeconds = runMetrics.endTime && runMetrics.startTime ? ((runMetrics.endTime - runMetrics.startTime) / 1000).toFixed(2) : 0;
   const processingMs = runMetrics.endTime && runMetrics.startTime ? runMetrics.endTime - runMetrics.startTime : 0;
   const detectionMs = runMetrics.endTime && runMetrics.serverTerminalEpoch ? runMetrics.endTime - runMetrics.serverTerminalEpoch : 0;
-  
+
+  const headers = [
+    "run_id", "condition", "mode", "repetition", "job_id", "image", "latency_setting",
+    "baseline_version", "terminal_version", "requests_started", "initial_200", "newer_200",
+    "unchanged_200", "no_change_204", "sse_stream_gets", "job_events_received", "heartbeats",
+    "version_gaps", "retrieval_errors", "cancellations", "distinct_new_versions_seen",
+    "processing_ms", "detection_ms", "stream_seconds", "peak_active_streams", "notes"
+  ];
   const row = [
-    runMetrics.runId, runMetrics.condition, els.pollMode.value, runMetrics.repetition, 
-    currentJobId || "N/A", selectedFile ? selectedFile.name : "N/A", runMetrics.latencySetting, 
-    runMetrics.baselineVersion, currentVersion, runMetrics.requestsStarted, 
-    runMetrics.initial200, runMetrics.newer200, runMetrics.unchanged200, 
-    runMetrics.noChange204,
-    runMetrics.sseStreamGets, runMetrics.jobEventsReceived, runMetrics.heartbeats,
-    runMetrics.retrievalErrors, runMetrics.cancellations, 
-    runMetrics.distinctVersions.size, processingMs, detectionMs, ""
+    runMetrics.runId, runMetrics.condition, els.pollMode.value, runMetrics.repetition,
+    currentJobId || "N/A", selectedFile ? selectedFile.name : "N/A", runMetrics.latencySetting,
+    runMetrics.baselineVersion, currentVersion, runMetrics.requestsStarted, runMetrics.initial200,
+    runMetrics.newer200, runMetrics.unchanged200, runMetrics.noChange204, runMetrics.sseStreamGets,
+    runMetrics.jobEventsReceived, runMetrics.heartbeats, versionGaps, runMetrics.retrievalErrors,
+    runMetrics.cancellations, runMetrics.distinctVersions.size, processingMs, detectionMs,
+    streamSeconds, peak, "notification-driven; DB read on each wake-up"
   ];
 
   const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), row.join(",")].join("\n");
-  const encodedUri = encodeURI(csvContent);
   const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
+  link.setAttribute("href", encodeURI(csvContent));
   link.setAttribute("download", `imagelab_telemetry_${currentJobId || "run"}.csv`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
 }
 
-if (els.exportCsvBtn) {
-  els.exportCsvBtn.addEventListener("click", exportRunCSV);
-}
+if (els.exportCsvBtn) els.exportCsvBtn.addEventListener("click", exportRunCSV);
 
 els.fileInput.addEventListener("change", () => {
   const file = els.fileInput.files[0];
   clearMessage();
   stopPolling();
-
-  if (!file) {
-    resetToInitialState();
-    return;
-  }
-
-  if (!constraints.acceptedMediaTypes.includes(file.type)) {
-    resetToInitialState();
-    showMessage(`"${file.name}" is not a supported image. Choose a JPEG or PNG file.`, "error");
-    return;
-  }
-
-  if (file.size > constraints.maxBytes) {
-    resetToInitialState();
-    showMessage(`"${file.name}" exceeds the limit.`, "error");
-    return;
-  }
-
+  if (!file) { resetToInitialState(); return; }
+  if (!constraints.acceptedMediaTypes.includes(file.type)) { resetToInitialState(); showMessage(`"${file.name}" is not supported.`, "error"); return; }
+  if (file.size > constraints.maxBytes) { resetToInitialState(); showMessage(`"${file.name}" exceeds the limit.`, "error"); return; }
   showSelected(file);
 });
 
 els.processButton.addEventListener("click", async () => {
   if (isSubmitting || !selectedFile) return;
-
   isSubmitting = true;
   els.processButton.disabled = true;
-  els.processLabel.textContent = "Uploading\u2026";
+  els.processLabel.textContent = "Uploading…";
   clearMessage();
 
   try {
     const formData = new FormData();
     formData.append("image", selectedFile);
-
     const response = await fetch("/v1/images", { method: "POST", body: formData });
-
     if (!response.ok) {
       let detail = `Upload failed (HTTP ${response.status}).`;
-      try {
-        const body = await response.json();
-        if (typeof body.error === "string") detail = body.error;
-      } catch {}
+      try { const body = await response.json(); if (typeof body.error === "string") detail = body.error; } catch {}
       throw new Error(detail);
     }
-
     const result = await response.json();
-    if (response.status !== 202 || !result.job_id || !result.status_url) {
-      throw new Error("The server did not return a valid job acceptance.");
-    }
+    if (response.status !== 202 || !result.job_id || !result.status_url) throw new Error("Invalid job acceptance.");
 
     els.jobIdle.hidden = true;
     els.jobActive.hidden = false;
@@ -659,11 +546,12 @@ els.processButton.addEventListener("click", async () => {
     currentVersion = 0;
     totalPollRequests = 0;
     if (els.pollCount) els.pollCount.textContent = "0";
-
+    if (els.stopObserveBtn) els.stopObserveBtn.hidden = false;
+    if (els.resumeObserveBtn) els.resumeObserveBtn.hidden = true;
+    
     startObservation(result.job_id, result.status_url);
-
   } catch (err) {
-    showMessage(err.message || "Upload failed. Please try again.", "error");
+    showMessage(err.message || "Upload failed.", "error");
   } finally {
     isSubmitting = false;
     els.processLabel.textContent = "Process image";
@@ -679,28 +567,37 @@ if (els.tryAgainButton) {
   });
 }
 
+if (els.stopObserveBtn) {
+  els.stopObserveBtn.addEventListener("click", () => {
+    stopPolling();
+    if (els.resumeObserveBtn) els.resumeObserveBtn.hidden = false;
+    if (els.stopObserveBtn) els.stopObserveBtn.hidden = true;
+  });
+}
+
+if (els.resumeObserveBtn) {
+  els.resumeObserveBtn.addEventListener("click", () => {
+    if (els.resumeObserveBtn) els.resumeObserveBtn.hidden = true;
+    if (els.stopObserveBtn) els.stopObserveBtn.hidden = false;
+    startObservation(currentJobId, currentStatusUrl);
+  });
+}
+
 if (els.pollMode) {
   els.pollMode.addEventListener("change", () => {
-    if (currentStatusUrl && currentJobId && isPolling) {
-      startObservation(currentJobId, currentStatusUrl);
-    }
+    if (currentStatusUrl && currentJobId && isPolling) startObservation(currentJobId, currentStatusUrl);
   });
 }
 
 const simToggle = document.getElementById("sim-progress-toggle");
 const simSelect = document.getElementById("sim-interval-select");
-
 if (simToggle && simSelect) {
-  simToggle.addEventListener("change", () => {
-    simSelect.disabled = !simToggle.checked;
-  });
+  simToggle.addEventListener("change", () => { simSelect.disabled = !simToggle.checked; });
 }
 
 window.addEventListener("pagehide", stopPolling);
 window.addEventListener("beforeunload", stopPolling);
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") stopPolling();
-});
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") stopPolling(); });
 
 resetToInitialState();
 renderConstraintsNote();
