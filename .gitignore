@@ -20,3 +20,6 @@
 # Measurements Recording & test_images folder
 *.csv
 /test_images/*
+
+# go download
+go1.26.6*

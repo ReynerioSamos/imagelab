@@ -22,5 +22,7 @@ func (app *application) routes() http.Handler {
 	// and API share one origin -- no CORS configuration needed.
 	mux.Handle("/", http.FileServer(http.Dir("./frontend")))
 
+	// Test 3 route - SSE Endpoint
+	mux.HandleFunc("GET /v1/jobs/{job_id}/events", app.sseJobHandler)
 	return mux
 }

@@ -49,7 +49,8 @@ services:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
-    command: /app/api -db-dsn="postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable" -exp-quiet-delay=30s
+    # /app/api -db-dsn="postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable" -exp-quiet-delay=30s for Condition A, or -exp-simulation-interval=2s for Condition C1/C2/C3
+    command: /app/api -db-dsn="postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable" -exp-simulation-interval=200ms
 
 volumes:
   pgdata:
