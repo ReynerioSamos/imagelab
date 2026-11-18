@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"imagelab/internal/data"
 )
 
-// sseJobHandler implements the Server-Sent Events endpoint for job observation.
 func (app *application) sseJobHandler(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("job_id")
 	if jobID == "" {
@@ -17,7 +17,7 @@ func (app *application) sseJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SSE-02: Return 404 for an unknown job BEFORE beginning a stream.
+	// SSE-02: 404 for unknown job BEFORE streaming.
 	job, err := app.models.Jobs.Get(jobID)
 	if err != nil {
 		if errors.Is(err, data.ErrRecordNotFound) {
@@ -28,76 +28,64 @@ func (app *application) sseJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SSE-03: Set required SSE headers.
+	// SSE-03: headers before body.
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	// Note: If deploying behind a reverse proxy like Nginx, you may also need 
-	// "X-Accel-Buffering: no" to prevent the proxy from buffering the stream.
 
-	// SSE-06: Get ResponseController to enable flushing.
 	rc := http.NewResponseController(w)
+	// write deadline so Condition A / long jobs are not severed mid-stream.
+	_ = rc.SetWriteDeadline(time.Time{})
 
-	// SYNC-03 & SYNC-06: Subscribe to the notification hub. 
-	// Defer ensures cleanup on every exit path (disconnect, terminal state, or error).
 	ch := globalHub.Subscribe(jobID)
 	defer globalHub.Unsubscribe(jobID, ch)
 
-	// Helper function to format, write, and flush an SSE event frame.
 	writeSSEEvent := func(eventName string, payload any) error {
-		jsonBytes, err := json.Marshal(payload)
+		b, err := json.Marshal(payload)
 		if err != nil {
 			return err
 		}
-		// Required frame shape: event: <name>\ndata: <json>\n\n
 		if _, err := fmt.Fprintf(w, "event: %s\n", eventName); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(w, "data: %s\n\n", string(jsonBytes)); err != nil {
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
 			return err
 		}
-		// Flush makes the frame available to the browser immediately.
-		return rc.Flush()
+		return rc.Flush() // SSE-06
 	}
 
-	// SSE-04: Send the current complete job snapshot immediately upon connection.
-	initialPayload := app.buildSSEJobPayload(job)
-	if err := writeSSEEvent("job-update", initialPayload); err != nil {
-		app.logger.Error("failed to write initial SSE event", "job_id", jobID, "error", err)
+	// SSE-04: immediate snapshot.
+	if err := writeSSEEvent("job-update", app.buildSSEJobPayload(job)); err != nil {
 		return
 	}
-
 	lastVersion := job.Version
 
-	// SSE-05 & SSE-07: Event loop for later updates.
+	// SSE-08: liveness heartbeat (NOT a job-update, never changes version).
+	hb := time.NewTicker(15 * time.Second)
+	defer hb.Stop()
+
 	for {
 		select {
-		// SYNC-07: Request cancellation ends the observer handler only.
-		case <-r.Context().Done():
+		case <-r.Context().Done(): // SYNC-07: client gone, worker unaffected.
 			app.logger.Info("SSE client disconnected", "job_id", jobID)
 			return
 
+		case <-hb.C:
+			_ = writeSSEEvent("heartbeat", map[string]any{
+				"ts": time.Now().UTC().Format(time.RFC3339Nano),
+			})
+
 		case <-ch:
-			// SYNC-04: Treat notification only as a signal to re-read PostgreSQL.
-			currentJob, err := app.models.Jobs.Get(jobID)
+			cur, err := app.models.Jobs.Get(jobID) // SYNC-04: re-read DB.
 			if err != nil {
-				app.logger.Error("failed to fetch job on SSE notification", "job_id", jobID, "error", err)
 				continue
 			}
-
-			// SYNC-05: Send only if version is newer (handles coalesced notifications).
-			if currentJob.Version > lastVersion {
-				lastVersion = currentJob.Version
-				payload := app.buildSSEJobPayload(currentJob)
-
-				if err := writeSSEEvent("job-update", payload); err != nil {
-					app.logger.Error("failed to write SSE update", "job_id", jobID, "error", err)
+			if cur.Version > lastVersion { // SYNC-05: skip coalesced.
+				lastVersion = cur.Version
+				if err := writeSSEEvent("job-update", app.buildSSEJobPayload(cur)); err != nil {
 					return
 				}
-
-				// SSE-07: End the server stream after sending a terminal snapshot.
-				if currentJob.Status == "completed" || currentJob.Status == "failed" {
-					app.logger.Info("SSE stream ending due to terminal state", "job_id", jobID, "status", currentJob.Status)
+				if cur.Status == "completed" || cur.Status == "failed" { // SSE-07
 					return
 				}
 			}
@@ -105,8 +93,6 @@ func (app *application) sseJobHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// buildSSEJobPayload formats the job representation identically to the long-poll response.
-// This ensures the frontend can use the exact same rendering function for both modes.
 func (app *application) buildSSEJobPayload(job *data.Job) map[string]any {
 	res := map[string]any{
 		"id":                 job.ID,
@@ -118,18 +104,14 @@ func (app *application) buildSSEJobPayload(job *data.Job) map[string]any {
 		"queued_at":          job.QueuedAt,
 		"started_at":         job.StartedAt,
 	}
-
 	if job.Status == "completed" {
 		res["completed_at"] = job.CompletedAt
-		variants, err := app.models.Variants.GetAllForImage(job.ImageID)
-		if err == nil {
+		if variants, err := app.models.Variants.GetAllForImage(job.ImageID); err == nil {
 			varList := make([]map[string]any, 0, len(variants))
 			for _, v := range variants {
 				varList = append(varList, map[string]any{
-					"name":   v.Name,
-					"width":  v.Width,
-					"height": v.Height,
-					"url":    fmt.Sprintf("/v1/images/%s/variants/%s", v.ImageID, v.Name),
+					"name": v.Name, "width": v.Width, "height": v.Height,
+					"url": fmt.Sprintf("/v1/images/%s/variants/%s", v.ImageID, v.Name),
 				})
 			}
 			res["variants"] = varList
@@ -138,7 +120,5 @@ func (app *application) buildSSEJobPayload(job *data.Job) map[string]any {
 		res["failed_at"] = job.FailedAt
 		res["error"] = job.ErrorMessage
 	}
-
-	// Wrap in "job" key to match the existing frontend expectation: `const job = data.job;`
 	return map[string]any{"job": res}
 }

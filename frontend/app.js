@@ -1,5 +1,5 @@
 // app.js - Version 3 Long & Short Polling Observation Loop, Telemetry & CSV Export. Test 3 SSE Implementation.
-let eventSource = null; // For SSE 
+let eventSource = null; // For SSE
 
 const els = {
   fileInput:          document.getElementById("file-input"),
@@ -12,7 +12,6 @@ const els = {
   processButton:      document.getElementById("process-button"),
   processLabel:       document.getElementById("process-button-label"),
   uploadMessage:      document.getElementById("upload-message"),
-
   jobIdle:            document.getElementById("job-idle"),
   jobActive:          document.getElementById("job-active"),
   jobId:              document.getElementById("job-id"),
@@ -26,11 +25,8 @@ const els = {
   pollingModeLabel:   document.getElementById("polling-mode-label"),
   retrievalError:     document.getElementById("retrieval-error"),
   tryAgainButton:     document.getElementById("try-again-button"),
-
   resultsEmpty:       document.getElementById("results-empty"),
   resultsGrid:        document.getElementById("results-grid"),
-  
-  // Phase 3 Experiment UI Elements (if present in HTML)
   exportCsvBtn:       document.getElementById("export-csv-btn"),
 };
 
@@ -40,19 +36,15 @@ const els = {
 let runMetrics = {
   runId: "run_01",
   get condition() {
-    // Automatically detect condition based on UI toggles or defaults
     const simToggle = document.getElementById("sim-progress-toggle");
     const simSelect = document.getElementById("sim-interval-select");
-    
     if (simToggle && simToggle.checked) {
       if (simSelect && simSelect.value === "200ms") return "Condition_C2";
       return "Condition_C1";
     }
-    // Check if Condition A is active (you can check an input, or add a condition dropdown if desired)
     const conditionSelect = document.getElementById("condition-select");
     if (conditionSelect) return conditionSelect.value;
-
-    return "Condition_B"; // Default fallback (Real Progress)
+    return "Condition_B";
   },
   repetition: "1",
   latencySetting: "none",
@@ -67,18 +59,16 @@ let runMetrics = {
   distinctVersions: new Set(),
   startTime: null,
   endTime: null,
-  serverTerminalEpoch: null, // For detection-delay calculation
-  sseStreamGets: 0, // Count of SSE messages received
-  jobEventsReceived: 0, // Count of job events received via SSE
-  heartbeatEvents: 0, // Count of heartbeat events received via SSE
+  serverTerminalEpoch: null,
+  sseStreamGets: 0,
+  jobEventsReceived: 0,
+  heartbeats: 0,
 };
 
 let telemetryLog = [];
-
 let selectedFile = null;
 let isSubmitting = false;
 let previewUrl = null;
-
 let currentJobId = null;
 let currentStatusUrl = null;
 let currentVersion = 0;
@@ -149,14 +139,11 @@ function formatTimestamp(isoString) {
 function stopPolling() {
   isPolling = false;
   observationToken++;
-
-  // Clean up SSE
+  
   if (eventSource) {
     eventSource.close();
     eventSource = null;
   }
-
-  // Clean up Fetch polling
   if (pollController) {
     pollController.abort();
     pollController = null;
@@ -174,7 +161,6 @@ function resetToInitialState() {
   if (els.pollCount) els.pollCount.textContent = "0";
   els.fileInput.value = "";
 
-  // Reset telemetry run metrics
   runMetrics.requestsStarted = 0;
   runMetrics.initial200 = 0;
   runMetrics.newer200 = 0;
@@ -185,7 +171,11 @@ function resetToInitialState() {
   runMetrics.distinctVersions.clear();
   runMetrics.startTime = null;
   runMetrics.endTime = null;
+  runMetrics.sseStreamGets = 0;
+  runMetrics.jobEventsReceived = 0;
+  runMetrics.heartbeats = 0;
   telemetryLog = [];
+  
   if (els.exportCsvBtn) els.exportCsvBtn.disabled = true;
 
   if (previewUrl) {
@@ -193,13 +183,11 @@ function resetToInitialState() {
     previewUrl = null;
   }
   els.previewImg.removeAttribute("src");
-
   els.dropzoneSelected.hidden = true;
   els.dropzoneEmpty.hidden = false;
-
   els.processButton.disabled = true;
   els.processLabel.textContent = "Process image";
-
+  
   if (els.jobIdle) els.jobIdle.hidden = false;
   if (els.jobActive) els.jobActive.hidden = true;
   if (els.statusBadge) {
@@ -296,8 +284,10 @@ function updateTimeline(job) {
   if (timeComplete) {
     if (job.status === "completed" && job.completed_at) {
       timeComplete.textContent = formatTimestamp(job.completed_at);
+      runMetrics.serverTerminalEpoch = new Date(job.completed_at).getTime();
     } else if (job.status === "failed" && job.failed_at) {
       timeComplete.textContent = `Failed at ${formatTimestamp(job.failed_at)}`;
+      runMetrics.serverTerminalEpoch = new Date(job.failed_at).getTime();
     } else {
       timeComplete.textContent = "Pending";
     }
@@ -411,12 +401,11 @@ async function startObservation(jobId, statusUrl) {
   updateVariantChecklist([], "queued");
 
   const mode = els.pollMode ? els.pollMode.value : "long";
-
-  // Update the polling mode label in the UI
+  
   if (els.pollingModeLabel) {
     if (mode === "sse") {
       els.pollingModeLabel.textContent = "SSE (listening)";
-    } else { 
+    } else {
       els.pollingModeLabel.textContent = mode === "long" ? "long-polling loop" : "short-polling interval (1s)";
     }
   }
@@ -424,28 +413,35 @@ async function startObservation(jobId, statusUrl) {
   // ==========================================
   // SERVER SENT EVENTS (SSE)
   // ==========================================
-    if (mode === "sse") {
+  if (mode === "sse") {
     runMetrics.sseStreamGets++;
-    
     eventSource = new EventSource(`/v1/jobs/${jobId}/events`);
+
+    eventSource.addEventListener("heartbeat", () => {
+      runMetrics.heartbeats++;
+    });
 
     eventSource.addEventListener("job-update", (event) => {
       runMetrics.jobEventsReceived++;
-      
       const data = JSON.parse(event.data);
       const job = data.job;
 
       runMetrics.distinctVersions.add(job.version);
       renderJobState(job);
 
-      // Update polls counter to show event count
       if (els.pollCount) {
         els.pollCount.textContent = runMetrics.jobEventsReceived;
       }
 
-      // Terminal state: close EventSource
       if (job.status === "completed" || job.status === "failed") {
         runMetrics.endTime = Date.now();
+        
+        if (job.status === "completed" && job.completed_at) {
+          runMetrics.serverTerminalEpoch = new Date(job.completed_at).getTime();
+        } else if (job.status === "failed" && job.failed_at) {
+          runMetrics.serverTerminalEpoch = new Date(job.failed_at).getTime();
+        }
+
         eventSource.close();
         eventSource = null;
         isPolling = false;
@@ -454,26 +450,25 @@ async function startObservation(jobId, statusUrl) {
       }
     });
 
-    // Error handler: show reconnecting, don't mark as failed
     eventSource.addEventListener("error", () => {
       if (els.pollingModeLabel) {
         els.pollingModeLabel.textContent = "SSE (reconnecting...)";
       }
-      // EventSource handles reconnection automatically
     });
 
-    return; // Exit; EventSource runs asynchronously
+    return;
   }
 
+  // ==========================================
+  // POLLING MODES
+  // ==========================================
   while (isPolling && token === observationToken) {
     pollController = new AbortController();
     const timeoutId = setTimeout(() => pollController.abort(), 30000);
-
     const reqStartTime = Date.now();
 
     try {
       let url = statusUrl;
-      
       if (mode === "long" && currentVersion > 0) {
         url += `?after=${currentVersion}&wait=20`;
       }
@@ -489,9 +484,6 @@ async function startObservation(jobId, statusUrl) {
       const reqReceiptTime = Date.now();
       clearTimeout(timeoutId);
 
-      // ==========================================
-      // PHASE 3: Telemetry Tracking on Response
-      // ==========================================
       runMetrics.requestsStarted++;
 
       if (response.status === 204) {
@@ -511,9 +503,8 @@ async function startObservation(jobId, statusUrl) {
 
       const data = await response.json();
       const job = data.job;
-
-      // Track version metrics
       const respVersion = job.version;
+
       if (runMetrics.requestsStarted === 1 || currentVersion === 0) {
         runMetrics.initial200++;
       } else if (respVersion > currentVersion) {
@@ -542,7 +533,7 @@ async function startObservation(jobId, statusUrl) {
         }
         
         if (els.pollingIndicator) els.pollingIndicator.hidden = true;
-        if (els.exportCsvBtn) els.exportCsvBtn.disabled = false; // Enable CSV export
+        if (els.exportCsvBtn) els.exportCsvBtn.disabled = false;
         break;
       }
 
@@ -569,32 +560,31 @@ async function startObservation(jobId, statusUrl) {
 }
 
 // ==========================================
-// PHASE 3: CSV Export Handler
+// CSV Export Handler
 // ==========================================
 function exportRunCSV() {
-
-const headers = [
-  "run_id", "condition", "mode", "repetition", "job_id", "image", 
-  "latency_setting", "baseline_version", "terminal_version", 
-  "requests_started", "initial_200", "newer_200", "unchanged_200", "no_change_204",
-  "sse_stream_gets", "job_events_received", "heartbeats",
-  "retrieval_errors", "cancellations", "distinct_new_versions_seen", 
-  "processing_ms", "detection_ms", "notes"
-];
+  const headers = [
+    "run_id", "condition", "mode", "repetition", "job_id", "image", 
+    "latency_setting", "baseline_version", "terminal_version", 
+    "requests_started", "initial_200", "newer_200", "unchanged_200", "no_change_204",
+    "sse_stream_gets", "job_events_received", "heartbeats",
+    "retrieval_errors", "cancellations", "distinct_new_versions_seen", 
+    "processing_ms", "detection_ms", "notes"
+  ];
 
   const processingMs = runMetrics.endTime && runMetrics.startTime ? runMetrics.endTime - runMetrics.startTime : 0;
   const detectionMs = runMetrics.endTime && runMetrics.serverTerminalEpoch ? runMetrics.endTime - runMetrics.serverTerminalEpoch : 0;
   
-const row = [
-  runMetrics.runId, runMetrics.condition, els.pollMode.value, runMetrics.repetition, 
-  currentJobId || "N/A", selectedFile ? selectedFile.name : "N/A", runMetrics.latencySetting, 
-  runMetrics.baselineVersion, currentVersion, runMetrics.requestsStarted, 
-  runMetrics.initial200, runMetrics.newer200, runMetrics.unchanged200, 
-  runMetrics.noChange204,
-  runMetrics.sseStreamGets, runMetrics.jobEventsReceived, runMetrics.heartbeats,
-  runMetrics.retrievalErrors, runMetrics.cancellations, 
-  runMetrics.distinctVersions.size, processingMs, detectionMs, ""
-];
+  const row = [
+    runMetrics.runId, runMetrics.condition, els.pollMode.value, runMetrics.repetition, 
+    currentJobId || "N/A", selectedFile ? selectedFile.name : "N/A", runMetrics.latencySetting, 
+    runMetrics.baselineVersion, currentVersion, runMetrics.requestsStarted, 
+    runMetrics.initial200, runMetrics.newer200, runMetrics.unchanged200, 
+    runMetrics.noChange204,
+    runMetrics.sseStreamGets, runMetrics.jobEventsReceived, runMetrics.heartbeats,
+    runMetrics.retrievalErrors, runMetrics.cancellations, 
+    runMetrics.distinctVersions.size, processingMs, detectionMs, ""
+  ];
 
   const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), row.join(",")].join("\n");
   const encodedUri = encodeURI(csvContent);
@@ -697,7 +687,6 @@ if (els.pollMode) {
   });
 }
 
-// Enable/disable simulation interval dropdown based on checkbox state
 const simToggle = document.getElementById("sim-progress-toggle");
 const simSelect = document.getElementById("sim-interval-select");
 

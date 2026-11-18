@@ -84,6 +84,9 @@ func (w *Worker) processNextJob(ctx context.Context) {
 	if job == nil {
 		return // No job available
 	}
+	if w.notify != nil {
+		w.notify(job.ID) // Notify observers that job is now processing
+	}
 
 	w.logger.Info("processing job", "job_id", job.ID, "image_id", job.ImageID)
 
@@ -146,7 +149,15 @@ func (w *Worker) executeJob(ctx context.Context, job *data.Job) error {
 
 	// --- CONDITION C1 / C2 / C3: Simulated Update Phase ---
 	if w.simulationInterval > 0 {
-		for step := 1; step <= 5; step++ {
+		// Calculate steps to hit exactly 10 seconds of simulation
+		maxSteps := int((10 * time.Second) / w.simulationInterval)
+		if maxSteps < 1 {
+			maxSteps = 1
+		}
+
+		w.logger.Info("starting simulated progress phase", "steps", maxSteps, "interval", w.simulationInterval)
+
+		for step := 1; step <= maxSteps; step++ {
 			time.Sleep(w.simulationInterval)
 			tx, err := w.models.DB.BeginTx(ctx, nil)
 			if err != nil {

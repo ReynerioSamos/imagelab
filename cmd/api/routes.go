@@ -24,5 +24,11 @@ func (app *application) routes() http.Handler {
 
 	// Test 3 route - SSE Endpoint
 	mux.HandleFunc("GET /v1/jobs/{job_id}/events", app.sseJobHandler)
+	// SSE Endpoint for debugging active streams
+	mux.HandleFunc("GET /v1/debug/streams", func(w http.ResponseWriter, r *http.Request) {
+	app.writeJSON(w, http.StatusOK, envelope{
+		"active_streams": globalHub.active, "peak_streams": globalHub.peak,
+	}, nil)
+})
 	return mux
 }

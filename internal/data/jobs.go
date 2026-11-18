@@ -104,7 +104,7 @@ func (m JobModel) Get(id string) (*Job, error) {
 func (m JobModel) ClaimNext() (*Job, error) {
 	query := `
 		UPDATE jobs
-		SET status = 'processing', started_at = NOW()
+		SET status = 'processing', started_at = NOW(), version = version + 1
 		WHERE id = (
 			SELECT id FROM jobs
 			WHERE status = 'queued'
