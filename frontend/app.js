@@ -1,4 +1,5 @@
-// app.js - Version 2 Long & Short Polling Observation Loop with Phase 3 Telemetry & CSV Export
+// app.js - Version 3 Long & Short Polling Observation Loop, Telemetry & CSV Export. Test 3 SSE Implementation.
+let eventSource = null; // For SSE 
 
 const els = {
   fileInput:          document.getElementById("file-input"),
@@ -67,7 +68,11 @@ let runMetrics = {
   startTime: null,
   endTime: null,
   serverTerminalEpoch: null, // For detection-delay calculation
+  sseStreamGets: 0, // Count of SSE messages received
+  jobEventsReceived: 0, // Count of job events received via SSE
+  heartbeatEvents: 0, // Count of heartbeat events received via SSE
 };
+
 let telemetryLog = [];
 
 let selectedFile = null;
@@ -144,6 +149,14 @@ function formatTimestamp(isoString) {
 function stopPolling() {
   isPolling = false;
   observationToken++;
+
+  // Clean up SSE
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
+
+  // Clean up Fetch polling
   if (pollController) {
     pollController.abort();
     pollController = null;
@@ -398,8 +411,58 @@ async function startObservation(jobId, statusUrl) {
   updateVariantChecklist([], "queued");
 
   const mode = els.pollMode ? els.pollMode.value : "long";
+
+  // Update the polling mode label in the UI
   if (els.pollingModeLabel) {
-    els.pollingModeLabel.textContent = mode === "long" ? "long-polling loop" : "short-polling interval (1s)";
+    if (mode === "sse") {
+      els.pollingModeLabel.textContent = "SSE (listening)";
+    } else { 
+      els.pollingModeLabel.textContent = mode === "long" ? "long-polling loop" : "short-polling interval (1s)";
+    }
+  }
+
+  // ==========================================
+  // SERVER SENT EVENTS (SSE)
+  // ==========================================
+    if (mode === "sse") {
+    runMetrics.sseStreamGets++;
+    
+    eventSource = new EventSource(`/v1/jobs/${jobId}/events`);
+
+    eventSource.addEventListener("job-update", (event) => {
+      runMetrics.jobEventsReceived++;
+      
+      const data = JSON.parse(event.data);
+      const job = data.job;
+
+      runMetrics.distinctVersions.add(job.version);
+      renderJobState(job);
+
+      // Update polls counter to show event count
+      if (els.pollCount) {
+        els.pollCount.textContent = runMetrics.jobEventsReceived;
+      }
+
+      // Terminal state: close EventSource
+      if (job.status === "completed" || job.status === "failed") {
+        runMetrics.endTime = Date.now();
+        eventSource.close();
+        eventSource = null;
+        isPolling = false;
+        if (els.pollingIndicator) els.pollingIndicator.hidden = true;
+        if (els.exportCsvBtn) els.exportCsvBtn.disabled = false;
+      }
+    });
+
+    // Error handler: show reconnecting, don't mark as failed
+    eventSource.addEventListener("error", () => {
+      if (els.pollingModeLabel) {
+        els.pollingModeLabel.textContent = "SSE (reconnecting...)";
+      }
+      // EventSource handles reconnection automatically
+    });
+
+    return; // Exit; EventSource runs asynchronously
   }
 
   while (isPolling && token === observationToken) {
@@ -509,24 +572,29 @@ async function startObservation(jobId, statusUrl) {
 // PHASE 3: CSV Export Handler
 // ==========================================
 function exportRunCSV() {
-  const headers = [
-    "run_id", "condition", "mode", "repetition", "job_id", "image", 
-    "latency_setting", "baseline_version", "terminal_version", "requests_started", 
-    "initial_200", "newer_200", "unchanged_200", "no_change_204", "retrieval_errors", 
-    "cancellations", "distinct_new_versions_seen", "processing_ms", "detection_ms", "notes"
-  ];
+
+const headers = [
+  "run_id", "condition", "mode", "repetition", "job_id", "image", 
+  "latency_setting", "baseline_version", "terminal_version", 
+  "requests_started", "initial_200", "newer_200", "unchanged_200", "no_change_204",
+  "sse_stream_gets", "job_events_received", "heartbeats",
+  "retrieval_errors", "cancellations", "distinct_new_versions_seen", 
+  "processing_ms", "detection_ms", "notes"
+];
 
   const processingMs = runMetrics.endTime && runMetrics.startTime ? runMetrics.endTime - runMetrics.startTime : 0;
   const detectionMs = runMetrics.endTime && runMetrics.serverTerminalEpoch ? runMetrics.endTime - runMetrics.serverTerminalEpoch : 0;
   
-  const row = [
-    runMetrics.runId, runMetrics.condition, els.pollMode.value, runMetrics.repetition, 
-    currentJobId || "N/A", selectedFile ? selectedFile.name : "N/A", runMetrics.latencySetting, 
-    runMetrics.baselineVersion, currentVersion, runMetrics.requestsStarted, 
-    runMetrics.initial200, runMetrics.newer200, runMetrics.unchanged200, 
-    runMetrics.noChange204, runMetrics.retrievalErrors, runMetrics.cancellations, 
-    runMetrics.distinctVersions.size, processingMs, detectionMs, ""
-  ];
+const row = [
+  runMetrics.runId, runMetrics.condition, els.pollMode.value, runMetrics.repetition, 
+  currentJobId || "N/A", selectedFile ? selectedFile.name : "N/A", runMetrics.latencySetting, 
+  runMetrics.baselineVersion, currentVersion, runMetrics.requestsStarted, 
+  runMetrics.initial200, runMetrics.newer200, runMetrics.unchanged200, 
+  runMetrics.noChange204,
+  runMetrics.sseStreamGets, runMetrics.jobEventsReceived, runMetrics.heartbeats,
+  runMetrics.retrievalErrors, runMetrics.cancellations, 
+  runMetrics.distinctVersions.size, processingMs, detectionMs, ""
+];
 
   const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), row.join(",")].join("\n");
   const encodedUri = encodeURI(csvContent);
