@@ -1,7 +1,4 @@
-version: '3.8'
-
 services:
-  # PostgreSQL Database
   db:
     image: postgres:18-alpine
     container_name: imagelab_db
@@ -11,11 +8,8 @@ services:
       POSTGRES_PASSWORD: imagelabpass
       POSTGRES_DB: imagelab
     ports:
-      - "5433:5432" # Changed to 5433 to avoid conflicts with local Postgres
+      - "5433:5432"
     volumes:
-      # Postgres 18+ images expect the mount at /var/lib/postgresql; data
-      # lives in a major-version-specific subdir beneath it
-      # See https://github.com/docker-library/postgres/pull/1259
       - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U imagelab -d imagelab"]
@@ -23,7 +17,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Migration Runner (Runs once, then exits)
   migrate:
     build: .
     container_name: imagelab_migrate
@@ -33,7 +26,6 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # Go API Server
   api:
     build: .
     container_name: imagelab_api
@@ -43,14 +35,14 @@ services:
       IMAGELAB_DB_DSN: "postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable"
       PORT: "4000"
     volumes:
-      # FIXED: Matches the /app/storage path in the Dockerfile and the storage-root flag in main.go
       - ./storage:/app/storage
+      - ./frontend:/app/frontend          # live-edit UI during Phase 3, no rebuild
     depends_on:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
-    # /app/api -db-dsn="postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable" -exp-quiet-delay=30s for Condition A, or -exp-simulation-interval=2s for Condition C1/C2/C3
-    command: /app/api -db-dsn="postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable" -exp-simulation-interval=200ms
+    # Flip conditions by editing API_ARGS in .env — never edit this file per-run
+    command: sh -c '/app/api -db-dsn="postgres://imagelab:imagelabpass@db:5432/imagelab?sslmode=disable" ${API_ARGS}'
 
 volumes:
   pgdata:
